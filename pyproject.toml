@@ -19,6 +19,11 @@ dependencies = [
 [tool.uv.sources]
 mjlab = { path = "../mjlab_research", editable = true }
 
+[tool.uv]
+# The versions mjlab_research locks: mjviser 0.0.17 pulls in mujoco-core 4, which
+# overwrites mujoco 3.16's library.
+constraint-dependencies = ["mjviser<0.0.17", "torch>=2.14,<2.15"]
+
 [tool.ruff]
 src = ["src"]
 indent-width = 2
