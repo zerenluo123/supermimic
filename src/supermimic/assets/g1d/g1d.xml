@@ -1,0 +1,338 @@
+<mujoco model="g1d_mocap">
+  <!-- Converted from the official Unitree G1-D URDF (g1_d.urdf); joint ranges follow the URDF, except
+       shoulder pitch/roll/yaw and elbow, which use the narrower ranges of the ScaleBFM G1 retarget model
+       (unitree_g1/g1_mocap_29dof.xml). With the full ranges the shoulder's second IK branch
+       (pitch+pi, pi-roll, yaw+pi) is reachable and the IK drifts into it on cross-body reaches. -->
+
+  <compiler angle="radian" meshdir="meshes" autolimits="true" />
+  <size memory="256M" />
+  <option timestep="0.002" />
+  <default>
+    <default class="visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" rgba="0.55 0.58 0.60 1" />
+    </default>
+    <default class="collision">
+      <geom group="3" rgba="0.80 0.20 0.15 0.40" />
+    </default>
+  </default>
+  <asset>
+    <mesh name="AGV_link" file="AGV_link.STL" />
+    <mesh name="Left_Wheel_Link" file="Left_Wheel_Link.STL" />
+    <mesh name="RIght_Wheel_Link" file="RIght_Wheel_Link.STL" />
+    <mesh name="LZ_ot_Link" file="LZ_ot_Link.STL" />
+    <mesh name="LZ_mt_Link" file="LZ_mt_Link.STL" />
+    <mesh name="LZ_it_Link" file="LZ_it_Link.STL" />
+    <mesh name="Pitching_Link" file="Pitching_Link.STL" />
+    <mesh name="Yaw_Link" file="Yaw_Link.STL" />
+    <mesh name="torso_link" file="torso_link.STL" />
+    <mesh name="logo_link" file="logo_link.STL" />
+    <mesh name="head_link" file="head_link.STL" />
+    <mesh name="left_shoulder_pitch_link" file="left_shoulder_pitch_link.STL" />
+    <mesh name="left_shoulder_roll_link" file="left_shoulder_roll_link.STL" />
+    <mesh name="left_shoulder_yaw_link" file="left_shoulder_yaw_link.STL" />
+    <mesh name="left_elbow_link" file="left_elbow_link.STL" />
+    <mesh name="left_wrist_roll_link" file="left_wrist_roll_link.STL" />
+    <mesh name="left_wrist_pitch_link" file="left_wrist_pitch_link.STL" />
+    <mesh name="left_wrist_yaw_link" file="left_wrist_yaw_link.STL" />
+    <mesh name="left_hand_palm_link" file="left_hand_palm_link.STL" />
+    <mesh name="left_hand_thumb_0_link" file="left_hand_thumb_0_link.STL" />
+    <mesh name="left_hand_thumb_0_link_collider" file="left_hand_thumb_0_link_collider.obj" />
+    <mesh name="left_hand_thumb_1_link" file="left_hand_thumb_1_link.STL" />
+    <mesh name="left_hand_thumb_1_link_collider" file="left_hand_thumb_1_link_collider.obj" />
+    <mesh name="left_hand_thumb_2_link" file="left_hand_thumb_2_link.STL" />
+    <mesh name="left_hand_thumb_2_link_collider" file="left_hand_thumb_2_link_collider.obj" />
+    <mesh name="left_hand_middle_0_link" file="left_hand_middle_0_link.STL" />
+    <mesh name="left_hand_middle_0_link_collider" file="left_hand_middle_0_link_collider.obj" />
+    <mesh name="left_hand_middle_1_link" file="left_hand_middle_1_link.STL" />
+    <mesh name="left_hand_middle_1_link_collider" file="left_hand_middle_1_link_collider.obj" />
+    <mesh name="left_hand_index_0_link" file="left_hand_index_0_link.STL" />
+    <mesh name="left_hand_index_0_link_collider" file="left_hand_index_0_link_collider.obj" />
+    <mesh name="left_hand_index_1_link" file="left_hand_index_1_link.STL" />
+    <mesh name="left_hand_index_1_link_collider" file="left_hand_index_1_link_collider.obj" />
+    <mesh name="right_shoulder_pitch_link" file="right_shoulder_pitch_link.STL" />
+    <mesh name="right_shoulder_roll_link" file="right_shoulder_roll_link.STL" />
+    <mesh name="right_shoulder_yaw_link" file="right_shoulder_yaw_link.STL" />
+    <mesh name="right_elbow_link" file="right_elbow_link.STL" />
+    <mesh name="right_wrist_roll_link" file="right_wrist_roll_link.STL" />
+    <mesh name="right_wrist_pitch_link" file="right_wrist_pitch_link.STL" />
+    <mesh name="right_wrist_yaw_link" file="right_wrist_yaw_link.STL" />
+    <mesh name="right_hand_palm_link" file="right_hand_palm_link.STL" />
+    <mesh name="right_hand_thumb_0_link" file="right_hand_thumb_0_link.STL" />
+    <mesh name="right_hand_thumb_0_link_collider" file="right_hand_thumb_0_link_collider.obj" />
+    <mesh name="right_hand_thumb_1_link" file="right_hand_thumb_1_link.STL" />
+    <mesh name="right_hand_thumb_1_link_collider" file="right_hand_thumb_1_link_collider.obj" />
+    <mesh name="right_hand_thumb_2_link" file="right_hand_thumb_2_link.STL" />
+    <mesh name="right_hand_thumb_2_link_collider" file="right_hand_thumb_2_link_collider.obj" />
+    <mesh name="right_hand_middle_0_link" file="right_hand_middle_0_link.STL" />
+    <mesh name="right_hand_middle_0_link_collider" file="right_hand_middle_0_link_collider.obj" />
+    <mesh name="right_hand_middle_1_link" file="right_hand_middle_1_link.STL" />
+    <mesh name="right_hand_middle_1_link_collider" file="right_hand_middle_1_link_collider.obj" />
+    <mesh name="right_hand_index_0_link" file="right_hand_index_0_link.STL" />
+    <mesh name="right_hand_index_0_link_collider" file="right_hand_index_0_link_collider.obj" />
+    <mesh name="right_hand_index_1_link" file="right_hand_index_1_link.STL" />
+    <mesh name="right_hand_index_1_link_collider" file="right_hand_index_1_link_collider.obj" />
+  </asset>
+  <worldbody>
+    <geom name="floor" type="plane" size="0 0 0.05" pos="0 0 0" rgba="0.2 0.3 0.4 1" contype="0" conaffinity="0" />
+    <light pos="0 0 5" dir="0 0 -1" directional="true" />
+    <!-- Wheel bottom is 0.1113 m below AGV_link. The chassis moves on the ground through
+         three virtual joints (x, y, yaw); wheel and dexterous-hand joints are removed. -->
+    <body name="AGV_link" pos="0 0 0.1113">
+      <joint name="base_x_joint" type="slide" axis="1 0 0" pos="0 0 0" />
+      <joint name="base_y_joint" type="slide" axis="0 1 0" pos="0 0 0" />
+      <joint name="base_yaw_joint" type="hinge" axis="0 0 1" pos="0 0 0" />
+      <inertial pos="0 0 0" quat="-0.0012482 0.703917 0.710281 -0.000710712" mass="37" diaginertia="0.0810683 0.0911694 0.158051" />
+      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="AGV_link" />
+      <geom class="collision" name="AGV_link_col_0" pos="0.00385 0 0.004" quat="1 0 0 0" type="box" size="0.26885 0.2625 0.0815" />
+      <body name="Left_Wheel_Link" pos="0.00022503 0.2031 -0.0265" quat="1 0 0 0">
+        <inertial pos="-3e-06 -0.000309 -2e-06" quat="-0.688509 0.688517 -0.161081 -0.161099" mass="1.5" diaginertia="0.00154164 0.00154174 0.00276373" />
+        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="Left_Wheel_Link" />
+      </body>
+      <body name="RIght_Wheel_Link" pos="0.00022503 -0.2031 -0.0265" quat="1 0 0 0">
+        <inertial pos="3e-06 0.000309 -2e-06" quat="0.706729 0.706733 -0.0230373 0.0230568" mass="1.5" diaginertia="0.00154166 0.00154172 0.00276373" />
+        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="RIght_Wheel_Link" />
+      </body>
+      <body name="LZ_ot_Link" pos="-0.00016264 0 0.5275" quat="1 0 0 0">
+        <inertial pos="0.000375 2.5e-05 -0.000249652" quat="0.604743 0.36635 0.604934 -0.366235" mass="3.3" diaginertia="0.0149375 0.0718194 0.0718218" />
+        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="LZ_ot_Link" />
+        <geom class="collision" name="LZ_ot_Link_col_0" pos="0 -0 -0.05" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_1" pos="0 0 -0.1" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_2" pos="0 0 -0.15" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_3" pos="0 0 -0.25" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_4" pos="0 0 -0.3" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_5" pos="0 0 -0.35" quat="1 0 0 0" type="sphere" size="0.08" />
+        <geom class="collision" name="LZ_ot_Link_col_6" pos="0 0 -0.2" quat="1 0 0 0" type="sphere" size="0.08" />
+        <body name="LZ_mt_Link" pos="0.00038767 0 0.01" quat="1 0 0 0">
+          <joint name="LZ_mt_Joint" type="slide" pos="0 0 0" axis="0 0 1" range="0 0.21" />
+          <inertial pos="0.000494 -6.2e-05 0.216016" quat="1 0 0 0" mass="3.3" diaginertia="0.0573527 0.0573529 0.0128473" />
+          <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="LZ_mt_Link" />
+          <body name="LZ_it_Link" pos="0.0013627 0.00020167 0.018" quat="1 0 0 0">
+            <joint name="LZ_it_Joint" type="slide" pos="0 0 0" axis="0 0 1" range="0 0.21" />
+            <inertial pos="-0.001566 -0.000192 -0.199159" quat="0.707681 0.020043 0.705963 -0.0200749" mass="3.4" diaginertia="0.0105839 0.0681828 0.0682101" />
+            <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="LZ_it_Link" />
+            <body name="Pitching_Link" pos="-0.0013627 -0.00020167 0.008" quat="1 0 0 0">
+              <inertial pos="0.040544 -0.00377 0.051728" quat="-0.307756 0.88468 0.078374 0.341299" mass="1.889" diaginertia="0.00253715 0.00483977 0.00488785" />
+              <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="Pitching_Link" />
+              <geom class="collision" name="Pitching_Link_col_0" pos="0.03766 -0 0.04703" quat="1 0 0 0" type="sphere" size="0.065" />
+              <geom class="collision" name="Pitching_Link_col_1" pos="0.01483 -0 0.0156" quat="1 0 0 0" type="sphere" size="0.065" />
+              <geom class="collision" name="Pitching_Link_col_2" pos="0 0 -0.02" quat="1 0 0 0" type="sphere" size="0.07" />
+                <!-- Where the G1 pelvis would sit under this torso (G1 pelvis->torso_link is
+                     (-0.004, 0, 0.044); here Pitching_Link->torso_link is (0.0531, 0.0002, 0.170)).
+                     IK target for the human Hips. -->
+                <body name="Yaw_Link" pos="0.0555 0.0002165 0.066" quat="1 0 0 0">
+                <joint name="Yaw_Joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-0.04363 2.3562" />
+                <inertial pos="7.4e-05 -0.00062 0.071221" quat="0.0163209 0.70709 0.0153293 0.706769" mass="1.144" diaginertia="0.00122659 0.0022047 0.00260247" />
+                <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="Yaw_Link" />
+                <geom class="collision" name="Yaw_Link_col_0" pos="0 -0.00013 0.02121" quat="1 0 0 0" type="sphere" size="0.065" />
+                <geom class="collision" name="Yaw_Link_col_1" pos="0 -0.00013 0.05256" quat="1 0 0 0" type="sphere" size="0.055" />
+                <body name="torso_link" pos="-0.0023536 -4.8782e-05 0.104009" quat="1 0 0 0">
+                  <joint name="torso_Joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-2.7053 2.7053" />
+                  <inertial pos="0.002601 0.000257 0.153719" quat="0.00142477 0.72444 -0.00385234 0.689325" mass="8.562" diaginertia="0.0307215 0.0535348 0.065762" />
+                  <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="torso_link" />
+                  <geom class="collision" name="torso_link_col_0" pos="0.005 0 0.105" quat="1 0 0 0" type="sphere" size="0.1" />
+                  <geom class="collision" name="torso_link_col_1" pos="0.005 0 0.19" quat="1 0 0 0" type="sphere" size="0.105" />
+                  <geom class="collision" name="torso_link_col_2" pos="0 0.015 0.045" quat="1 0 0 0" type="sphere" size="0.075" />
+                  <geom class="collision" name="torso_link_col_3" pos="0 -0.015 0.045" quat="1 0 0 0" type="sphere" size="0.075" />
+                  <body name="logo_link" pos="0.0039635 0 -0.054" quat="1 0 0 0">
+                    <inertial pos="0 0 0" quat="1 0 0 0" mass="0.001" diaginertia="1e-07 1e-07 1e-07" />
+                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="logo_link" />
+                  </body>
+                  <body name="head_link" pos="0.0039635 0 -0.054" quat="1 0 0 0">
+                    <inertial pos="0.005267 0.000299 0.449869" quat="0.51341 -0.501637 -0.49878 -0.485786" mass="1.036" diaginertia="0.00180579 0.00408711 0.00418528" />
+                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="head_link" />
+                    <geom class="collision" name="head_link_col_0" pos="-0.00283 3e-05 0.45081" quat="1 0 0 0" type="sphere" size="0.07976" />
+                    <geom class="collision" name="head_link_col_1" pos="-0.00283 3e-05 0.40456" quat="1 0 0 0" type="sphere" size="0.07976" />
+                    <site name="head_link_site" pos="0 0 0" size="0.01" group="4" />
+                  </body>
+                  <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778" quat="0.990264 0.139201 4.05418e-05 -9.10379e-05">
+                    <joint name="left_shoulder_pitch_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-3.0892 1.149" />
+                    <inertial pos="0 0.035892 -0.011628" quat="0.473199 0.693261 0.491648 -0.23185" mass="0.718" diaginertia="0.000406394 0.000432842 0.000465864" />
+                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_shoulder_pitch_link" />
+                    <body name="left_shoulder_roll_link" pos="0 0.038 -0.013831" quat="0.990268 -0.139172 0 0">
+                      <joint name="left_shoulder_roll_joint" type="hinge" pos="0 0 0" axis="1 0 0" range="-0.6 2.2515" />
+                      <inertial pos="-0.000227 0.00727 -0.063243" quat="0.517762 0.500886 0.490012 -0.49084" mass="0.643" diaginertia="0.000388977 0.000618011 0.000691311" />
+                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_shoulder_roll_link" />
+                      <body name="left_shoulder_yaw_link" pos="0 0.00624 -0.1032" quat="1 0 0 0">
+                        <joint name="left_shoulder_yaw_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.4 2.0" />
+                        <inertial pos="0.010773 -0.002949 -0.072009" quat="0.554101 0.554989 0.417653 -0.458831" mass="0.734" diaginertia="0.000400661 0.00103217 0.00106187" />
+                        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_shoulder_yaw_link" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_0" pos="0.01 0 -0.085" quat="1 0 0 0" type="sphere" size="0.0454" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_1" pos="0 0 -0.045" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_2" pos="0 0 0.015" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_3" pos="0 0 0.095" quat="1 0 0 0" type="sphere" size="0.045" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_4" pos="0 0 0.045" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="left_shoulder_yaw_link_col_5" pos="0 0 -0.015" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <body name="left_elbow_link" pos="0.015783 0 -0.080518" quat="1 0 0 0">
+                          <joint name="left_elbow_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1.0472 1.7" />
+                          <inertial pos="0.064956 0.004454 -0.010062" quat="0.724262 -0.658024 0.175365 -0.108148" mass="0.6" diaginertia="0.000259353 0.000421612 0.000443035" />
+                          <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_elbow_link" />
+                          <body name="left_wrist_roll_link" pos="0.1 0.00188791 -0.01" quat="1 0 0 0">
+                            <joint name="left_wrist_roll_joint" type="hinge" pos="0 0 0" axis="1 0 0" range="-1.97222 1.97222" />
+                            <inertial pos="0.0171394 0.000537591 4.8864e-07" quat="-0.000405228 0.813346 0.58178 -0.000305371" mass="0.085445" diaginertia="3.57798e-05 4.96646e-05 5.48211e-05" />
+                            <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_wrist_roll_link" />
+                            <body name="left_wrist_pitch_link" pos="0.038 0 0" quat="1 0 0 0">
+                              <joint name="left_wrist_pitch_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1.61443 1.61443" />
+                              <inertial pos="0.0229999 -0.00111685 -0.00111658" quat="0.922753 -0.383982 0.0125547 0.0304325" mass="0.48405" diaginertia="0.000164648 0.000429873 0.000430353" />
+                              <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_wrist_pitch_link" />
+                              <geom class="collision" name="left_wrist_pitch_link_col_0" pos="0.0402 0.00012 0.00084" quat="1 0 0 0" type="sphere" size="0.03462" />
+                              <geom class="collision" name="left_wrist_pitch_link_col_1" pos="-0.095 0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="left_wrist_pitch_link_col_2" pos="0.005 0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="left_wrist_pitch_link_col_3" pos="-0.035 0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="left_wrist_pitch_link_col_4" pos="-0.065 0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <body name="left_wrist_yaw_link" pos="0.046 0 0" quat="1 0 0 0">
+                                <joint name="left_wrist_yaw_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.61443 1.61443" />
+                                <inertial pos="0.0220038 0.000494851 0.000538611" quat="0.586226 0.578329 0.414631 -0.387242" mass="0.0845765" diaginertia="3.75684e-05 5.09807e-05 5.97564e-05" />
+                                <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_wrist_yaw_link" />
+                                <geom class="collision" name="left_wrist_yaw_link_col_0" pos="0.095 0.005 -0.02" quat="1 0 0 0" type="sphere" size="0.025" />
+                                <geom class="collision" name="left_wrist_yaw_link_col_1" pos="0.015 0 -0" quat="1 0 0 0" type="sphere" size="0.03209" />
+                                <geom class="collision" name="left_wrist_yaw_link_col_2" pos="0.055 0.005 -0" quat="1 0 0 0" type="sphere" size="0.03209" />
+                                <geom class="collision" name="left_wrist_yaw_link_col_3" pos="0.095 0.005 0.025" quat="1 0 0 0" type="sphere" size="0.025" />
+                                <body name="left_hand_palm_link" pos="0.0415 0.003 0" quat="1 0 0 0">
+                                  <inertial pos="0.0621463 -0.000508697 -0.000581711" quat="-0.706287 0.707216 0.0283485 -0.0141462" mass="0.372839" diaginertia="0.000274343 0.000396282 0.000540479" />
+                                  <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_palm_link" />
+                                  <site name="left_hand_palm_link_site" pos="0 0 0" size="0.01" group="4" />
+                                  <body name="left_hand_thumb_0_link" pos="0.0255 0 0" quat="1 0 0 0">
+                                    <inertial pos="-0.000884246 -0.00863407 0.000944293" quat="0.652775 0.173226 0.0019923 0.737477" mass="0.0862366" diaginertia="1.43741e-05 1.60058e-05 1.6546e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_0_link" />
+                                    <geom class="collision" name="left_hand_thumb_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_0_link_collider" />
+                                    <body name="left_hand_thumb_1_link" pos="-0.0025 -0.0193 0" quat="1 0 0 0">
+                                      <inertial pos="-0.000827888 -0.0354744 -0.0003809" quat="0.592321 0.431239 0.377261 0.566448" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_1_link" />
+                                      <geom class="collision" name="left_hand_thumb_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_1_link_collider" />
+                                      <body name="left_hand_thumb_2_link" pos="0 -0.0458 0" quat="1 0 0 0">
+                                        <inertial pos="-0.00171735 -0.0262819 0.000107789" quat="0.497343 0.508157 0.497095 0.497316" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_2_link" />
+                                        <geom class="collision" name="left_hand_thumb_2_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_thumb_2_link_collider" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="left_hand_middle_0_link" pos="0.0777 0.0016 -0.0285" quat="1 0 0 0">
+                                    <inertial pos="0.0354744 0.000827888 0.0003809" quat="0.819373 -0.571696 -0.0381683 0.0182953" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_middle_0_link" />
+                                    <geom class="collision" name="left_hand_middle_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_middle_0_link_collider" />
+                                    <body name="left_hand_middle_1_link" pos="0.0458 0 0" quat="1 0 0 0">
+                                      <inertial pos="0.0262819 0.00171735 -0.000107789" quat="0.71082 0.70333 1.91742e-05 0.007822" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_middle_1_link" />
+                                      <geom class="collision" name="left_hand_middle_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_middle_1_link_collider" />
+                                    </body>
+                                  </body>
+                                  <body name="left_hand_index_0_link" pos="0.0777 0.0016 0.0285" quat="1 0 0 0">
+                                    <inertial pos="0.0354744 0.000827888 0.0003809" quat="0.819373 -0.571696 -0.0381683 0.0182953" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_index_0_link" />
+                                    <geom class="collision" name="left_hand_index_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_index_0_link_collider" />
+                                    <body name="left_hand_index_1_link" pos="0.0458 0 0" quat="1 0 0 0">
+                                      <inertial pos="0.0262819 0.00171735 -0.000107789" quat="0.71082 0.70333 1.91742e-05 0.007822" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_index_1_link" />
+                                      <geom class="collision" name="left_hand_index_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="left_hand_index_1_link_collider" />
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                  <body name="right_shoulder_pitch_link" pos="0.0039563 -0.10021 0.24778" quat="0.990264 -0.139201 4.05418e-05 9.10379e-05">
+                    <joint name="right_shoulder_pitch_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-3.0892 1.149" />
+                    <inertial pos="0 -0.035892 -0.011628" quat="-0.23185 0.491648 0.693261 0.473199" mass="0.718" diaginertia="0.000406394 0.000432842 0.000465864" />
+                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_shoulder_pitch_link" />
+                    <body name="right_shoulder_roll_link" pos="0 -0.038 -0.013831" quat="0.990268 0.139172 0 0">
+                      <joint name="right_shoulder_roll_joint" type="hinge" pos="0 0 0" axis="1 0 0" range="-2.2515 0.6" />
+                      <inertial pos="-0.000227 -0.00727 -0.063243" quat="0.500886 0.517762 0.49084 -0.490012" mass="0.643" diaginertia="0.000388977 0.000618011 0.000691311" />
+                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_shoulder_roll_link" />
+                      <body name="right_shoulder_yaw_link" pos="0 -0.00624 -0.1032" quat="1 0 0 0">
+                        <joint name="right_shoulder_yaw_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-2.0 1.4" />
+                        <inertial pos="0.010773 0.002949 -0.072009" quat="0.554989 0.554101 0.458831 -0.417653" mass="0.734" diaginertia="0.000400661 0.00103217 0.00106187" />
+                        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_shoulder_yaw_link" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_0" pos="0 -0 -0.015" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_1" pos="0.01 -0 -0.085" quat="1 0 0 0" type="sphere" size="0.0454" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_2" pos="0 -0 0.015" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_3" pos="0 -0 0.045" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_4" pos="0 -0 -0.045" quat="1 0 0 0" type="sphere" size="0.035" />
+                        <geom class="collision" name="right_shoulder_yaw_link_col_5" pos="0 -0 0.095" quat="1 0 0 0" type="sphere" size="0.045" />
+                        <body name="right_elbow_link" pos="0.015783 0 -0.080518" quat="1 0 0 0">
+                          <joint name="right_elbow_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1.0472 1.7" />
+                          <inertial pos="0.064956 -0.004454 -0.010062" quat="-0.658024 0.724262 0.108148 -0.175365" mass="0.6" diaginertia="0.000259353 0.000421612 0.000443035" />
+                          <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_elbow_link" />
+                          <body name="right_wrist_roll_link" pos="0.1 -0.00188791 -0.01" quat="1 0 0 0">
+                            <joint name="right_wrist_roll_joint" type="hinge" pos="0 0 0" axis="1 0 0" range="-1.97222 1.97222" />
+                            <inertial pos="0.0171394 -0.000537591 4.8864e-07" quat="-0.000305371 0.58178 0.813346 -0.000405228" mass="0.085445" diaginertia="3.57798e-05 4.96646e-05 5.48211e-05" />
+                            <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_wrist_roll_link" />
+                            <body name="right_wrist_pitch_link" pos="0.038 0 0" quat="1 0 0 0">
+                              <joint name="right_wrist_pitch_joint" type="hinge" pos="0 0 0" axis="0 1 0" range="-1.61443 1.61443" />
+                              <inertial pos="0.0229999 0.00111685 -0.00111658" quat="0.922753 0.383982 0.0125547 -0.0304325" mass="0.48405" diaginertia="0.000164648 0.000429873 0.000430353" />
+                              <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_wrist_pitch_link" />
+                              <geom class="collision" name="right_wrist_pitch_link_col_0" pos="0.0402 -0.00012 0.00084" quat="1 0 0 0" type="sphere" size="0.03462" />
+                              <geom class="collision" name="right_wrist_pitch_link_col_1" pos="0.005 -0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="right_wrist_pitch_link_col_2" pos="-0.035 -0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="right_wrist_pitch_link_col_3" pos="-0.065 -0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <geom class="collision" name="right_wrist_pitch_link_col_4" pos="-0.095 -0 0" quat="1 0 0 0" type="sphere" size="0.035" />
+                              <body name="right_wrist_yaw_link" pos="0.046 0 0" quat="1 0 0 0">
+                                <joint name="right_wrist_yaw_joint" type="hinge" pos="0 0 0" axis="0 0 1" range="-1.61443 1.61443" />
+                                <inertial pos="0.0220038 -0.000494851 0.000538611" quat="-0.387242 0.414631 0.578329 0.586226" mass="0.0845765" diaginertia="3.75684e-05 5.09807e-05 5.97564e-05" />
+                                <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_wrist_yaw_link" />
+                                <geom class="collision" name="right_wrist_yaw_link_col_0" pos="0.01294 -0.00095 -0.0004" quat="1 0 0 0" type="sphere" size="0.03209" />
+                                <geom class="collision" name="right_wrist_yaw_link_col_1" pos="0.095 -0.005 -0.02" quat="1 0 0 0" type="sphere" size="0.025" />
+                                <geom class="collision" name="right_wrist_yaw_link_col_2" pos="0.095 -0.005 0.025" quat="1 0 0 0" type="sphere" size="0.025" />
+                                <geom class="collision" name="right_wrist_yaw_link_col_3" pos="0.055 -0.005 -0" quat="1 0 0 0" type="sphere" size="0.03209" />
+                                <body name="right_hand_palm_link" pos="0.0415 -0.003 0" quat="1 0 0 0">
+                                  <inertial pos="0.0621463 0.000508697 -0.000581711" quat="0.707216 -0.706287 0.0141462 -0.0283485" mass="0.372839" diaginertia="0.000274343 0.000396282 0.000540479" />
+                                  <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_palm_link" />
+                                  <site name="right_hand_palm_link_site" pos="0 0 0" size="0.01" group="4" />
+                                  <body name="right_hand_thumb_0_link" pos="0.0255 0 0" quat="1 0 0 0">
+                                    <inertial pos="-0.000884246 0.00863407 0.000944293" quat="-0.652775 0.173226 -0.0019923 0.737477" mass="0.0862366" diaginertia="1.43741e-05 1.60058e-05 1.6546e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_0_link" />
+                                    <geom class="collision" name="right_hand_thumb_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_0_link_collider" />
+                                    <body name="right_hand_thumb_1_link" pos="-0.0025 0.0193 0" quat="1 0 0 0">
+                                      <inertial pos="-0.000827888 0.0354744 -0.0003809" quat="0.431239 0.592321 -0.566448 -0.377261" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_1_link" />
+                                      <geom class="collision" name="right_hand_thumb_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_1_link_collider" />
+                                      <body name="right_hand_thumb_2_link" pos="0 0.0458 0" quat="1 0 0 0">
+                                        <inertial pos="-0.00171735 0.0262819 0.000107789" quat="0.497316 0.497095 0.508157 0.497343" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                        <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_2_link" />
+                                        <geom class="collision" name="right_hand_thumb_2_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_thumb_2_link_collider" />
+                                      </body>
+                                    </body>
+                                  </body>
+                                  <body name="right_hand_middle_0_link" pos="0.0777 -0.0016 -0.0285" quat="1 0 0 0">
+                                    <inertial pos="0.0354744 -0.000827888 0.0003809" quat="-0.571696 0.819373 -0.0182953 0.0381683" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_middle_0_link" />
+                                    <geom class="collision" name="right_hand_middle_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_middle_0_link_collider" />
+                                    <body name="right_hand_middle_1_link" pos="0.0458 0 0" quat="1 0 0 0">
+                                      <inertial pos="0.0262819 -0.00171735 -0.000107789" quat="0.71082 -0.70333 1.91742e-05 -0.007822" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_middle_1_link" />
+                                      <geom class="collision" name="right_hand_middle_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_middle_1_link_collider" />
+                                    </body>
+                                  </body>
+                                  <body name="right_hand_index_0_link" pos="0.0777 -0.0016 0.0285" quat="1 0 0 0">
+                                    <inertial pos="0.0354744 -0.000827888 0.0003809" quat="-0.571696 0.819373 -0.0182953 0.0381683" mass="0.0588507" diaginertia="5.9666e-06 1.22902e-05 1.28514e-05" />
+                                    <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_index_0_link" />
+                                    <geom class="collision" name="right_hand_index_0_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_index_0_link_collider" />
+                                    <body name="right_hand_index_1_link" pos="0.0458 0 0" quat="1 0 0 0">
+                                      <inertial pos="0.0262819 -0.00171735 -0.000107789" quat="0.71082 -0.70333 1.91742e-05 -0.007822" mass="0.0203063" diaginertia="1.53495e-06 3.86645e-06 4.61314e-06" />
+                                      <geom class="visual" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_index_1_link" />
+                                      <geom class="collision" name="right_hand_index_1_link_col_0" pos="0 0 0" quat="1 0 0 0" type="mesh" mesh="right_hand_index_1_link_collider" />
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <equality>
+    <joint name="lifts_together" joint1="LZ_mt_Joint" joint2="LZ_it_Joint" polycoef="0 1 0 0 0" solref="0.002 1" solimp="0.95 0.99 0.001 0.5 2"/>
+  </equality>
+</mujoco>

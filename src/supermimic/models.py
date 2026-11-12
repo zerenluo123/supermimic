@@ -48,7 +48,9 @@ class Dynamics(nn.Module):
 
   ``action`` is the raw post-clamp policy output — same distribution the
   policy sees back as ``last_action`` in its observation. Dynamics applies
-  ``proc = action * scale + offset`` internally before normalization.
+  ``proc = action * scale + offset`` internally before normalization, with
+  ``tanh(action)`` on the entries of ``tanh_mask`` when one is given (the
+  G1-D's speed commands).
   """
 
   def __init__(
@@ -59,6 +61,7 @@ class Dynamics(nn.Module):
     action_scale: torch.Tensor,
     action_offset: torch.Tensor,
     hidden_dims: tuple[int, ...],
+    tanh_mask: torch.Tensor | None = None,
   ):
     super().__init__()
 
@@ -69,6 +72,9 @@ class Dynamics(nn.Module):
 
     self.register_buffer("action_scale", action_scale.clone())
     self.register_buffer("action_offset", action_offset.clone())
+    # A None buffer stays out of the state dict.
+    self.tanh_mask: torch.Tensor | None
+    self.register_buffer("tanh_mask", None if tanh_mask is None else tanh_mask.clone())
 
     self.state_normalizer = _CudaGraphNormalization(self.num_rep_state)
     self.action_normalizer = _CudaGraphNormalization(num_actions)
@@ -81,6 +87,8 @@ class Dynamics(nn.Module):
 
   def proc(self, action: torch.Tensor) -> torch.Tensor:
     """Map raw policy output to proc joint commands: ``action * scale + offset``."""
+    if self.tanh_mask is not None:
+      action = torch.where(self.tanh_mask, torch.tanh(action), action)
     return action * self.action_scale + self.action_offset
 
   def forward(

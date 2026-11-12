@@ -72,9 +72,17 @@ def create_representation(
         f"Maxcoord full_state_dim ({full_state_dim}) must be divisible by 13"
       )
     rep = MaxCoordRepresentation(full_state_dim // 13, default_joint_pos)
+  elif name == "g1d":
+    from supermimic.g1d.representation import G1DRepresentation
+
+    rep = G1DRepresentation(default_joint_pos.device)
+    if full_state_dim != rep.full_state_dim:
+      raise ValueError(
+        f"G1-D full_state_dim is {rep.full_state_dim}, the env gives {full_state_dim}"
+      )
   else:
     raise ValueError(
-      f"Unknown representation: {name}. Must be 'gencoord' or 'maxcoord'."
+      f"Unknown representation: {name}. Must be 'gencoord', 'maxcoord' or 'g1d'."
     )
   rep.actor_obs_mode = actor_obs_mode
   if actor_obs_mode == "proprio":
@@ -265,6 +273,9 @@ class StateRepresentation(nn.Module, ABC):
 
   substep_coeff: float = 1.0
 
+  critic_extra_dim: int = 0
+  """Width of ``critic_extra``, privileged critic-only features (0: none)."""
+
   # ------------------------------------------------------------------
   # Abstract methods (must be implemented by subclasses)
   # ------------------------------------------------------------------
@@ -415,6 +426,12 @@ class StateRepresentation(nn.Module, ABC):
     return _compiled_assemble_goal(
       content, root_pos, root_quat, target_pos, target_quat
     )
+
+  def critic_extra(
+    self, rep_state: torch.Tensor, motion: MotionLoader, motion_times: torch.Tensor
+  ) -> torch.Tensor:
+    """Privileged critic-only features, ``critic_extra_dim`` wide."""
+    raise NotImplementedError
 
   @abstractmethod
   def world_frame_bodies(

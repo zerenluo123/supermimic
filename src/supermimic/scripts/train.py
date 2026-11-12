@@ -5,18 +5,26 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
-import mjlab.tasks  # noqa: F401
-import tyro
-from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.tasks.registry import list_tasks, load_env_cfg
+from supermimic.utils.distributed import pin_local_gpu
 
-import supermimic.tasks  # noqa: F401
-from supermimic.runners.supermimic_runner import SuperMimicRunner, SuperMimicRunnerCfg
-from supermimic.scripts.train_utils import (
+pin_local_gpu()  # under torchrun, before anything initializes CUDA
+
+import mjlab.tasks  # noqa: E402, F401
+import tyro  # noqa: E402
+from mjlab.envs import ManagerBasedRlEnvCfg  # noqa: E402
+from mjlab.tasks.registry import list_tasks, load_env_cfg  # noqa: E402
+
+import supermimic.tasks  # noqa: E402, F401
+from supermimic.runners.supermimic_runner import (  # noqa: E402
+  SuperMimicRunner,
+  SuperMimicRunnerCfg,
+)
+from supermimic.scripts.train_utils import (  # noqa: E402
   create_env,
   download_registry_motions,
   setup_device,
 )
+from supermimic.utils.distributed import finalize, init_distributed  # noqa: E402
 
 
 @dataclass
@@ -29,6 +37,9 @@ class TrainConfig:
   device: str | None = None
   registry_name: str | None = "supermimic/wandb-registry-motions/lafan_run1_subject5"
   motion_file: str | None = None
+  scale_lr_with_world: bool = True
+  """Under torchrun with N ranks, multiply the learning rates by sqrt(N) (the
+  averaged gradient of N times the data is less noisy)."""
 
   @staticmethod
   def from_task(task_id: str) -> "TrainConfig":
@@ -37,6 +48,32 @@ class TrainConfig:
       env=env_cfg,
       runner=SuperMimicRunnerCfg(),
     )
+
+
+def _passed(args: list[str], flag: str) -> bool:
+  """``flag`` (``--a.b-c``) is on the command line, in either spelling."""
+  spellings = {flag, flag.replace("-", "_").replace("__", "--", 1)}
+  return any(a.split("=", 1)[0] in spellings for a in args)
+
+
+def apply_g1d_defaults(runner: SuperMimicRunnerCfg, args: list[str]) -> None:
+  """The G1-D trains the deployable actor: proprio with a 10-frame history, never
+  the true state. Fills in what the command line leaves at the G1 defaults and
+  refuses ``--runner.actor-obs rep_state``."""
+  if runner.representation == "gencoord":
+    runner.representation = "g1d"
+    print("[INFO] Auto-detected g1d representation from task_id")
+  if runner.actor_obs == "rep_state":
+    if _passed(args, "--runner.actor-obs"):
+      raise ValueError(
+        "--runner.actor-obs rep_state feeds the G1-D actor the true, noise-free "
+        "state, which the robot does not have; train it on proprio"
+      )
+    runner.actor_obs = "proprio"
+    print("[INFO] G1-D actor obs: proprio")
+  if runner.history_length == 1 and not _passed(args, "--runner.history-length"):
+    runner.history_length = 10
+    print("[INFO] G1-D actor history: 10 frames")
 
 
 def main() -> None:
@@ -56,6 +93,17 @@ def main() -> None:
   )
 
   device = setup_device(args.device)
+  rank, world = init_distributed()
+  if world > 1:
+    if args.env.seed is not None:
+      args.env.seed += rank
+    if args.scale_lr_with_world:
+      args.runner.wm.lr *= world**0.5
+      args.runner.policy.lr *= world**0.5
+    print(
+      f"[INFO] Rank {rank}/{world}: wm lr {args.runner.wm.lr:g}, "
+      f"policy lr {args.runner.policy.lr:g}, env seed {args.env.seed}"
+    )
   print(f"[INFO] Loading environment: {chosen_task}")
 
   if args.motion_file:
@@ -77,6 +125,8 @@ def main() -> None:
   if "MaxCoord" in chosen_task and args.runner.representation == "gencoord":
     args.runner.representation = "maxcoord"
     print("[INFO] Auto-detected maxcoord representation from task_id")
+  if chosen_task.endswith("-G1D"):
+    apply_g1d_defaults(args.runner, remaining_args)
 
   args.env.commands["motion"].sampling_mode = (
     "external" if args.runner.sampling_mode == "return" else args.runner.sampling_mode
@@ -94,6 +144,7 @@ def main() -> None:
   )
 
   runner.run()
+  finalize()
 
 
 if __name__ == "__main__":

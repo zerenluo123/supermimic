@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import shutil
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
@@ -34,6 +36,7 @@ from supermimic.tasks.task_spec import (
   build_actor_obs_td,
   resolve_task_specs,
 )
+from supermimic.utils.distributed import broadcast_module, is_main
 from supermimic.utils.helpers import (
   extract_action_scale_offset,
   unpack_obs_dims,
@@ -55,6 +58,9 @@ class BaseRunnerCfg:
   actor_obs: str = "rep_state"  # "rep_state" or "proprio"
   log_interval: int = 10
   save_interval: int = 1000
+  keep_checkpoints: bool = False
+  """Also keep every saved checkpoint under ``<log_dir>/checkpoints/<step>/`` with
+  the runner cfg, for offline evaluation of the whole run."""
   history_length: int = 1
   termination_softness: float = 0.05
   dynamics_hidden_dims: tuple[int, ...] = (2048, 2048, 2048)
@@ -158,6 +164,8 @@ def build_world_model(cfg: BaseRunnerCfg, env, device: str) -> WorldModel:
   )
 
   action_scale, action_offset = extract_action_scale_offset(env)
+  action_manager = env.unwrapped.action_manager
+  action_term = action_manager.get_term(action_manager.active_terms[0])
   dynamics = Dynamics(
     representation,
     num_actions,
@@ -165,6 +173,7 @@ def build_world_model(cfg: BaseRunnerCfg, env, device: str) -> WorldModel:
     action_scale,
     action_offset,
     hidden_dims=cfg.dynamics_hidden_dims,
+    tanh_mask=getattr(action_term, "tanh_mask", None),
   ).to(device)
 
   return WorldModel(
@@ -326,6 +335,7 @@ class BaseRunner[CfgT: BaseRunnerCfg]:
       self._representation.rep_state_dim
       + self._num_goals
       + self._sim_context.output_dim
+      + self._representation.critic_extra_dim
     )
     return actor_dim, critic_dim
 
@@ -457,8 +467,10 @@ class BaseRunner[CfgT: BaseRunnerCfg]:
 
   def _create_log_dir(self, *extra_parts: str) -> Path:
     """Create and return a timestamped log directory."""
-    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    log_dir = Path("logs", self.task_id, *extra_parts, timestamp)
+    name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    if self.cfg.run_name:  # runs started together get their own directories
+      name += f"_{self.cfg.run_name}"
+    log_dir = Path("logs", self.task_id, *extra_parts, name)
     log_dir.mkdir(parents=True, exist_ok=True)
     print(f"[INFO] Logging to {log_dir}")
     return log_dir
@@ -646,14 +658,32 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
     self._flush_normalization()
     return self.env.num_envs
 
+  def _critic_module(self) -> nn.Module | None:
+    return getattr(self.policy_learner, "critic", None)
+
+  def _keep_checkpoint(self, log_dir: Path, step: int, files: list[str]) -> None:
+    """Copy the checkpoint just saved to ``checkpoints/<step>/`` with the cfg."""
+    keep = log_dir / "checkpoints" / f"{step:08d}"
+    keep.mkdir(parents=True, exist_ok=True)
+    for f in files:
+      shutil.copy2(f, keep / Path(f).name)
+    meta = {"step": step, "task_id": self.task_id, "runner_cfg": asdict(self.cfg)}
+    (keep / "run.json").write_text(json.dumps(meta, indent=1, default=str))
+
   def _update_actor_normalization(self, actor_inputs: tuple[TensorDict, ...]) -> None:
     self.policy_learner.actor.train()
     for actor_td in actor_inputs:
       self.policy_learner.actor.update_normalization(actor_td)
 
   def run(self) -> None:
-    log_dir = self._create_log_dir()
-    self._init_wandb(log_dir)
+    # Data-parallel ranks start from rank 0's weights; only rank 0 logs and saves.
+    main = is_main()
+    for module in (self._dynamics, self.policy_learner.actor, self._critic_module()):
+      if module is not None:
+        broadcast_module(module)
+    log_dir = self._create_log_dir() if main else Path()
+    if main:
+      self._init_wandb(log_dir)
 
     self.env.reset()
     self._seed_sim_history()
@@ -700,7 +730,7 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
         loss_dict.update(wm_logs)
         loss_dict.update(policy_logs)
 
-      if step % self.cfg.log_interval == 0:
+      if main and step % self.cfg.log_interval == 0:
         elapsed_time = time.time() - start_time
         total_train_time = wm_learn_time + policy_learn_time
         collect_time = elapsed_time - total_train_time
@@ -721,7 +751,7 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
         policy_learn_time = 0
         num_collected_steps = 0
 
-      if step % self.cfg.save_interval == 0:
+      if main and step % self.cfg.save_interval == 0:
         assert wandb.run is not None  # _init_wandb ran before the loop
         # The previous version must be logged before its files are overwritten.
         if upload is not None:
@@ -736,10 +766,13 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
           critic_path = str(log_dir / "critic.pt")
           torch.save(critic.state_dict(), critic_path)
           checkpoint_files.append(critic_path)
-        # Skip ONNX export on huge datasets.
+        if self.cfg.keep_checkpoints:
+          self._keep_checkpoint(log_dir, step, checkpoint_files)
+        # Skip ONNX export on huge datasets and on the G1-D (no deploy contract).
         if (
           self._representation.actor_obs_mode == "proprio"
           and self.motion.time_step_total <= 15_000
+          and self.cfg.representation != "g1d"
         ):
           checkpoint_files += export_actor_as_onnx(
             actor=self.policy_learner.actor,

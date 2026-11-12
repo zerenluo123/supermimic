@@ -9,6 +9,8 @@ import torch
 import torch.nn as nn
 from tensordict import TensorDict
 
+from supermimic.utils.distributed import average_gradients
+
 
 def build_optimizers(
   modules: Sequence[nn.Module],
@@ -47,6 +49,9 @@ def _optimize_step(
   for optimizer in optimizers:
     optimizer.zero_grad(set_to_none=True)
   loss.backward()
+  if params is not None:
+    params = list(params)
+    average_gradients(params)  # data-parallel ranks step on the mean gradient
   grad_norm = None
   if params is not None and max_norm is not None:
     # Don't set error_if_nonfinite=True: it forces a per-step CPU<->GPU sync.

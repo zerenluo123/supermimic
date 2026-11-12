@@ -72,8 +72,14 @@ class WorldModelEnv(ABC):
       )
     terms = env.cfg.terminations
     self._termination_softness = termination_softness
-    self._anchor_pos_threshold = terms["anchor_pos"].params["threshold"]
-    self._anchor_ori_threshold = terms["anchor_ori"].params["threshold"]
+    # Read off the class, so a mocked representation has none.
+    self._critic_extra_dim = getattr(type(representation), "critic_extra_dim", 0)
+    # A robot without the G1's anchor rules scores its own failure rules
+    # (``normalized_failure_error``, the G1-D).
+    self._representation_terminates = "anchor_pos" not in terms
+    if not self._representation_terminates:
+      self._anchor_pos_threshold = terms["anchor_pos"].params["threshold"]
+      self._anchor_ori_threshold = terms["anchor_ori"].params["threshold"]
 
   # ------------------------------------------------------------------
   # Subclass surface
@@ -158,7 +164,12 @@ class WorldModelEnv(ABC):
 
   def _critic_obs(self) -> torch.Tensor:
     """The privileged critic input — full WM state, not the actor's sensor obs."""
-    return torch.cat([self.rep_state, self._wm_goal_obs, self.sim_ctx], dim=-1)
+    parts = [self.rep_state, self._wm_goal_obs, self.sim_ctx]
+    if self._critic_extra_dim:
+      parts.append(
+        self.representation.critic_extra(self.rep_state, self.motion, self.motion_times)
+      )
+    return torch.cat(parts, dim=-1)
 
   def _wm_step(
     self,
@@ -183,7 +194,15 @@ class WorldModelEnv(ABC):
     ref_body_pos_w, ref_body_quat_w, ref_body_lin_vel_w, ref_body_ang_vel_w = (
       self._ref_body_state
     )
-    term_prob = self._compute_term_prob(next_aux_state, ref_body_pos_w, ref_body_quat_w)
+    if self._representation_terminates:
+      error = self.representation.normalized_failure_error(
+        next_aux_state, next_rep_state, ref_body_pos_w, ref_body_quat_w
+      )
+      term_prob = torch.sigmoid((error - 1.0) / self._termination_softness)
+    else:
+      term_prob = self._compute_term_prob(
+        next_aux_state, ref_body_pos_w, ref_body_quat_w
+      )
     reward = self.representation.compute_wm_reward_from_reference(
       next_rep_state,
       next_aux_state,
