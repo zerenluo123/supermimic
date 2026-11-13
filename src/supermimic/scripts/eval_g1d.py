@@ -45,8 +45,10 @@ def main(
   watch: bool = False,
   every: int = 1,
   seed_last_action: bool = True,
+  steps: tuple[str, ...] = (),
 ) -> None:
-  """``--no-seed-last-action`` scores the way checkpoints trained before
+  """``--steps``: only these checkpoints (directory names, e.g. ``00060000``).
+  ``--no-seed-last-action`` scores the way checkpoints trained before
   2026-11-13 were scored (see ``G1DMotionCommandCfg.seed_last_action``)."""
   import mjlab.tasks  # noqa: F401
   import numpy as np
@@ -87,6 +89,8 @@ def main(
       p for p in (run_dir / "checkpoints").glob("*") if (p / "actor.pt").exists()
     )
     ckpts = [c for i, c in enumerate(ckpts) if i % every == 0]
+    if steps:
+      ckpts = [c for c in ckpts if c.name in steps]
     for ckpt in ckpts:
       for name in rulers:
         if ckpt.name in done[name]:
