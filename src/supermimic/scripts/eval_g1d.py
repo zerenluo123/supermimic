@@ -44,7 +44,10 @@ def main(
   num_envs: int = 1024,
   watch: bool = False,
   every: int = 1,
+  seed_last_action: bool = True,
 ) -> None:
+  """``--no-seed-last-action`` scores the way checkpoints trained before
+  2026-11-13 were scored (see ``G1DMotionCommandCfg.seed_last_action``)."""
   import mjlab.tasks  # noqa: F401
   import numpy as np
   import torch
@@ -69,7 +72,7 @@ def main(
     num_clips = len(files)
   envs = {
     name: make_benchmark_env(
-      motion_file, RULERS[name], min(num_envs, num_clips), device
+      motion_file, RULERS[name], min(num_envs, num_clips), device, seed_last_action
     )
     for name in rulers
   }
