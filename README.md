@@ -42,6 +42,52 @@ uv run src/supermimic/scripts/play.py \
   <TASK_ID> --wandb-path <RUN_PATH>
 ```
 
+## G1-D offline replay
+
+Record a kept checkpoint once, in parallel on a GPU (no rendering):
+
+```bash
+uv run src/supermimic/scripts/record_g1d.py \
+  --checkpoint-dir <run>/checkpoints/00060000 \
+  --motion-file 'data/lafan1_g1d_v3/*.npz' --eval-tag lafan \
+  --output-dir runs/replay_00060000/lafan --num-envs 128
+```
+
+For BONES use `--motion-file data/bones_v4_eval2000 --eval-tag bones2000`
+and a separate output directory. Repeating the command resumes completed clips;
+different weights, motion file metadata, or recording code require a new directory.
+The cache contains an `index.json` and one compressed `.npz` per clip. It stores
+float32 joint poses for the simulator, reference and closed-loop world model,
+plus step errors and rewards, not meshes or video. Each frame uses 281 bytes
+before compression (21 joints × 3 poses × 4 bytes plus metrics). Recording runs
+without observation/action/reset noise and continues after failures.
+
+Play from disk without running a policy or GPU simulation:
+
+```bash
+uv run src/supermimic/scripts/play_g1d_replay.py \
+  --replay-dir runs/replay_00060000/lafan \
+  --visual-mesh-dir data/g1d_visual_meshes --port 8080
+```
+
+The existing `play.py SuperMimic-GenCoord-G1D` also accepts `--replay-dir` and
+`--port`. Omit `--visual-mesh-dir` to use the shipped collision meshes. Original
+visual meshes and both ghosts are drawn on every playback frame; mesh complexity
+and network/browser speed still affect rendering. Only the selected clip is
+decompressed in memory. No client connected means playback stays idle.
+
+The panel supports filtering, failed clips, previous/next clip, automatic next,
+pause, forward/backward step, speed, a frame slider, jump to first failure,
+camera follow and ghost visibility. Scrubbing pauses playback. Frame 0 is the
+initial pose; frame N is the post-step pose after N control steps. Training
+errors use that step's pre-advance reference, matching the original rules.
+The failure frame is included in playback. Switching **End clip on failure**
+off reveals the already-recorded recovery without recomputing anything.
+The benchmark table retains the original evaluation results; the separately
+labelled recording failure marker comes from this trajectory starting at frame 0.
+Non-finite world-model predictions are hidden, and non-finite simulator states
+end the recording with an explicit truncation marker.
+
 ## Acknowledgements
 
 SuperMimic contains code inspired by these projects:

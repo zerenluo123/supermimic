@@ -18,10 +18,12 @@ G1-D specifics (from SuperMimic-Reproduced, g1d):
 
 from __future__ import annotations
 
+import copy
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
+import numpy as np
 import torch
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as base_mdp
@@ -316,6 +318,28 @@ def _g1d_motion_loading(body_names: tuple[str, ...], half_precision: bool):
     commands_module.MotionLoader = original_loader
 
 
+def ghost_model(mj_model, rgba) -> object:
+  """A copy of the scene showing only the robot, in ``rgba``: its visual geoms
+  when it has them (``visual_mesh_dir``), else its colliders."""
+  model = copy.deepcopy(mj_model)
+  # Visual geoms are unnamed: find the robot's geoms by their bodies.
+  robot = [
+    g
+    for g in range(model.ngeom)
+    if model.body(model.geom_bodyid[g]).name.startswith("robot/")
+  ]
+  visual = [
+    g for g in robot if model.geom_contype[g] == 0 and model.geom_conaffinity[g] == 0
+  ]
+  shown = set(visual or robot)
+  for g in range(model.ngeom):
+    if g in shown:
+      model.geom_rgba[g] = rgba
+    else:
+      model.geom_rgba[g, 3] = 0
+  return model
+
+
 class G1DMotionCommand(MotionCommand):
   """``MotionCommand`` on the G1-D: the reference joints are the 17 state joints
   and the root is ``AGV_link``, written to the planar and lift joints."""
@@ -422,8 +446,46 @@ class G1DMotionCommand(MotionCommand):
     self.robot.write_joint_state_to_sim(qpos, qvel, env_ids=env_ids)
     self.robot.reset(env_ids=env_ids)
 
+  def ghost_qpos(
+    self, root_pos: torch.Tensor, root_quat: torch.Tensor, joint_pos: torch.Tensor
+  ) -> np.ndarray:
+    """Scene qpos posing the robot at a root (AGV) pose ``(3,)`` / ``(4,)`` with the
+    17 state joints, the rest of the scene at zero: for ghost renderings."""
+    jm = self.jm
+    root_pos, root_quat, joint_pos = (
+      t.detach().float().cpu().numpy() for t in (root_pos, root_quat, joint_pos)
+    )
+    w, x, y, z = root_quat
+    joints = np.zeros(jm.num_joints)
+    joints[jm.base[0]], joints[jm.base[1]] = root_pos[0], root_pos[1]
+    joints[jm.base[2]] = np.arctan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+    joints[jm.lift] = 0.5 * joint_pos[0]
+    joints[jm.upper] = joint_pos[1:]
+    qpos = np.zeros(self._env.sim.mj_model.nq)
+    qpos[self.robot.indexing.joint_q_adr.cpu().numpy()] = joints
+    return qpos
+
   def _debug_vis_impl(self, visualizer) -> None:
-    del visualizer  # the ghost assumes a free-joint robot
+    """The reference as a ghost robot (the free-joint ghost of ``MotionCommand``
+    does not apply to the planar root)."""
+    if self.cfg.viz.mode != "ghost":
+      return
+    if self._ghost_model is None:
+      self._ghost_model = ghost_model(self._env.sim.mj_model, self._ghost_color)
+    origins = self._env.scene.env_origins
+    for batch in visualizer.get_env_indices(self.num_envs):
+      frame = self.time_steps[batch]
+      qpos = self.ghost_qpos(
+        self.motion.root_pos_w[frame] + origins[batch],
+        self.motion.root_quat_w[frame],
+        self.motion.joint_pos[frame],
+      )
+      visualizer.add_ghost_entity(
+        qpos,
+        model=self._ghost_model,
+        alpha=float(self._ghost_color[3]),
+        label=f"ghost_{batch}",
+      )
 
 
 @dataclass(kw_only=True)

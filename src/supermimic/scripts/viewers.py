@@ -85,6 +85,8 @@ class SuperMimicViewerMixin:
     self.curr_pred_rep_state = None
     self.curr_wm_aux = None
     self.last_actions: torch.Tensor | None = None
+    self.wm_prediction_enabled = True
+    """Roll the world model alongside the sim for its ghost (off: sim only)."""
 
     # For per-body tracking: map entity-local body indexes to MuJoCo body IDs
     if isinstance(self.representation, MaxCoordRepresentation):
@@ -260,67 +262,79 @@ class SuperMimicViewerMixin:
         self._step_count += 1
         self._stats_steps += 1
 
-        # Predict Next State (WM)
-        wm_goal, _ = self.representation.compute_wm_goal(
-          motion_cmd.motion,
-          wm_motion_times,
-          self.curr_wm_aux,
-        )
-
-        # Closed-loop actor step on the WM-predicted state.
-        wm_actor_goal = self._build_actor_goal(wm_goal, self.curr_wm_aux)
-        wm_sensor = self.representation.compute_actor_sensor(
-          self.curr_pred_rep_state,
-          self.sim_ctx,
-          aux_state=self.curr_wm_aux,
-          joint_state=self.representation.joint_state(self.curr_pred_rep_state),
-          last_action=self.last_actions,
-        )
-        self._wm_history = self._advance_history(self._wm_history, wm_sensor)
-        wm_actor_obs = build_actor_obs_td(
-          {self.current_task: wm_actor_goal}, self._wm_history
-        )
-        wm_actions = self.policy(wm_actor_obs)
-
-        next_aux, next_rep_state = self.dynamics(
-          self.curr_pred_rep_state, wm_actions, self.curr_wm_aux, self.sim_ctx
-        )
-        self.last_actions = wm_actions.clone().detach()
-
-        self.curr_pred_rep_state = next_rep_state
-        self.curr_wm_aux = next_aux
-
-        # Visualization: reconstruct full state for ghost rendering
-        full_state = self.representation.reconstruct_full_state(
-          self.curr_wm_aux, self.curr_pred_rep_state
-        )
-        state = full_state[0]  # Take 0-th env
-
-        if isinstance(self.representation, MaxCoordRepresentation):
-          B = self.representation.num_bodies
-          self.wm_vis_xpos = state[: B * 3].reshape(B, 3).cpu().numpy()
-          self.wm_vis_xquat = state[B * 3 : B * 7].reshape(B, 4).cpu().numpy()
+        if not self.wm_prediction_enabled:
+          self.curr_wm_aux = None  # restart from the sim state when re-enabled
+          self.wm_vis_qpos = self.wm_vis_xpos = None
         else:
-          nq = self.env.unwrapped.sim.mj_model.nq
-          qpos = np.zeros(nq)
-          root_pos = state[:3]
-          root_quat = state[3:7]
-          if self.free_joint_q_adr is not None:
-            qpos[self.free_joint_q_adr[0:3]] = root_pos.cpu().numpy()
-            qpos[self.free_joint_q_adr[3:7]] = root_quat.cpu().numpy()
+          # Predict Next State (WM)
+          wm_goal, _ = self.representation.compute_wm_goal(
+            motion_cmd.motion,
+            wm_motion_times,
+            self.curr_wm_aux,
+          )
+
+          # Closed-loop actor step on the WM-predicted state.
+          wm_actor_goal = self._build_actor_goal(wm_goal, self.curr_wm_aux)
+          wm_sensor = self.representation.compute_actor_sensor(
+            self.curr_pred_rep_state,
+            self.sim_ctx,
+            aux_state=self.curr_wm_aux,
+            joint_state=self.representation.joint_state(self.curr_pred_rep_state),
+            last_action=self.last_actions,
+          )
+          self._wm_history = self._advance_history(self._wm_history, wm_sensor)
+          wm_actor_obs = build_actor_obs_td(
+            {self.current_task: wm_actor_goal}, self._wm_history
+          )
+          wm_actions = self.policy(wm_actor_obs)
+
+          next_aux, next_rep_state = self.dynamics(
+            self.curr_pred_rep_state, wm_actions, self.curr_wm_aux, self.sim_ctx
+          )
+          self.last_actions = wm_actions.clone().detach()
+
+          self.curr_pred_rep_state = next_rep_state
+          self.curr_wm_aux = next_aux
+
+          # Visualization: reconstruct full state for ghost rendering
+          full_state = self.representation.reconstruct_full_state(
+            self.curr_wm_aux, self.curr_pred_rep_state
+          )
+          state = full_state[0]  # Take 0-th env
+
+          if isinstance(self.representation, MaxCoordRepresentation):
+            B = self.representation.num_bodies
+            self.wm_vis_xpos = state[: B * 3].reshape(B, 3).cpu().numpy()
+            self.wm_vis_xquat = state[B * 3 : B * 7].reshape(B, 4).cpu().numpy()
+          elif hasattr(motion_cmd, "ghost_qpos"):
+            # A robot whose root is not a free joint poses itself (the G1-D).
+            nj = self.representation.num_joints
+            self.wm_vis_qpos = motion_cmd.ghost_qpos(
+              state[:3], state[3:7], state[7 : 7 + nj]
+            )
             self.wm_vis_mocap_pos = None
             self.wm_vis_mocap_quat = None
-            joint_state_start = 7
           else:
-            # Fixed-base models may still need mocap pose for ghost visualization.
-            self.wm_vis_mocap_pos = root_pos.cpu().numpy()
-            self.wm_vis_mocap_quat = root_quat.cpu().numpy()
-            joint_state_start = 0
-          joint_state = state[
-            joint_state_start : joint_state_start + len(self.joint_q_adr)
-          ]
-          qpos[self.joint_q_adr] = joint_state.cpu().numpy()
-          self.wm_vis_qpos = qpos
+            nq = self.env.unwrapped.sim.mj_model.nq
+            qpos = np.zeros(nq)
+            root_pos = state[:3]
+            root_quat = state[3:7]
+            if self.free_joint_q_adr is not None:
+              qpos[self.free_joint_q_adr[0:3]] = root_pos.cpu().numpy()
+              qpos[self.free_joint_q_adr[3:7]] = root_quat.cpu().numpy()
+              self.wm_vis_mocap_pos = None
+              self.wm_vis_mocap_quat = None
+              joint_state_start = 7
+            else:
+              # Fixed-base models may still need mocap pose for ghost visualization.
+              self.wm_vis_mocap_pos = root_pos.cpu().numpy()
+              self.wm_vis_mocap_quat = root_quat.cpu().numpy()
+              joint_state_start = 0
+            joint_state = state[
+              joint_state_start : joint_state_start + len(self.joint_q_adr)
+            ]
+            qpos[self.joint_q_adr] = joint_state.cpu().numpy()
+            self.wm_vis_qpos = qpos
 
         self.step_in_rollout += 1
         if dones.any() or self.step_in_rollout >= self.num_steps_rollout:

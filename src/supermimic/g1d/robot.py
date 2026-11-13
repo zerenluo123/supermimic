@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import functools
+import os
 from dataclasses import dataclass, field
 
 import mujoco
@@ -34,17 +35,22 @@ from supermimic.g1d import constants as C
 COLLISION_GEOMS = r".*_col_[0-9]+"
 
 
-def load_spec() -> mujoco.MjSpec:
+def load_spec(visual_mesh_dir: str | None = None) -> mujoco.MjSpec:
   """G1-D spec for simulation: visual geoms (and the meshes only they use), the
-  XML floor and light are dropped, so only the small collider meshes ship."""
+  XML floor and light are dropped, so only the small collider meshes ship.
+
+  ``visual_mesh_dir`` (a directory with the XML's visual STL meshes, which do not
+  ship) keeps the visual geoms, for viewing; they collide with nothing."""
   spec = mujoco.MjSpec.from_file(str(C.G1D_XML))
   for g in list(spec.geoms):
-    if g.classname.name == "visual" or g.name == "floor":
+    if (g.classname.name == "visual" and visual_mesh_dir is None) or g.name == "floor":
       spec.delete(g)
   used = {g.meshname for g in spec.geoms if g.type == mujoco.mjtGeom.mjGEOM_MESH}
   for m in list(spec.meshes):
     if m.name not in used:
       spec.delete(m)
+    elif visual_mesh_dir is not None and m.file.lower().endswith(".stl"):
+      m.file = os.path.join(os.path.abspath(visual_mesh_dir), os.path.basename(m.file))
   for light in list(spec.lights):
     spec.delete(light)
   # The XML's <size memory> conflicts with the scene when mjlab attaches the entity.
@@ -209,7 +215,8 @@ NO_SELF_COLLISION = CollisionCfg(
 )
 
 
-def get_g1d_robot_cfg() -> EntityCfg:
+def get_g1d_robot_cfg(visual_mesh_dir: str | None = None) -> EntityCfg:
+  """``visual_mesh_dir``: see :func:`load_spec` (viewing only)."""
   return EntityCfg(
     # mjlab wraps a fixed-base entity in a mocap body at init_state.pos; AGV_link
     # keeps its XML offset (0.1113 m) below it. Unmatched joints default to 0.
@@ -219,7 +226,7 @@ def get_g1d_robot_cfg() -> EntityCfg:
       joint_vel={".*": 0.0},
     ),
     collisions=(NO_SELF_COLLISION,),
-    spec_fn=load_spec,
+    spec_fn=functools.partial(load_spec, visual_mesh_dir),
     articulation=EntityArticulationInfoCfg(
       actuators=_actuators(), soft_joint_pos_limit_factor=0.9
     ),
