@@ -81,18 +81,6 @@ def effective_action(action: torch.Tensor) -> torch.Tensor:
   )
 
 
-SPEED_LIMITS = (C.VX_MAX, C.WZ_MAX, C.VZ_MAX)
-# |tanh| of a seeded speed command, so its raw action stays finite.
-MAX_SEEDED_SPEED = 0.99
-
-
-def speed_action(speeds: torch.Tensor) -> torch.Tensor:
-  """Raw ``(vx, wz, vz)`` actions whose effective speeds are ``speeds`` (..., 3),
-  clipped just inside the speed limits."""
-  ratio = speeds / speeds.new_tensor(SPEED_LIMITS)
-  return torch.atanh(ratio.clamp(-MAX_SEEDED_SPEED, MAX_SEEDED_SPEED))
-
-
 def yaw_quat_from_angle(yaw: torch.Tensor) -> torch.Tensor:
   half = 0.5 * yaw
   zero = torch.zeros_like(half)
@@ -427,25 +415,7 @@ class G1DMotionCommand(MotionCommand):
       joint_pos,
       self.joint_vel[env_ids],
     )
-    if self.cfg.seed_last_action:
-      fwd = root_lin_vel[:, 0] * yaw.cos() + root_lin_vel[:, 1] * yaw.sin()
-      self._seed_last_action(
-        env_ids,
-        torch.stack([fwd, root_ang_vel[:, 2], self.joint_vel[env_ids, 0]], -1),
-      )
     self._pending_forward = True
-
-  def _seed_last_action(self, env_ids: torch.Tensor, speeds: torch.Tensor) -> None:
-    """Make the previous command the speeds ``(vx, wz, vz)`` the robot starts with.
-
-    The actor does not sense the chassis's forward speed; it reads it off its
-    previous command. A reset zeroes that command, so a start in motion looked
-    like a stop, and with the history padded by that first frame the actor
-    braked for about a history length before it followed the clip."""
-    actions = getattr(self._env, "action_manager", None)
-    if actions is None:  # the managers are still being built
-      return
-    actions.action[env_ids, C.NUM_UPPER :] = speed_action(speeds)
 
   def _write_reference_state_to_sim(
     self,
@@ -523,10 +493,6 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   half_precision_motions: bool = False
   """Keep the motion table at half precision (``HALF_FIELDS``) to fit a large
   library next to training; float32 otherwise."""
-  seed_last_action: bool = True
-  """At a reset, set the previous chassis and column command to the speeds the
-  robot starts with (``G1DMotionCommand._seed_last_action``); False keeps the
-  zero command (the checkpoints trained before 2026-11-13)."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)

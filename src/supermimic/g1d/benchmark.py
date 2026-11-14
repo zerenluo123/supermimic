@@ -68,18 +68,12 @@ class ClipResult:
 
 
 def make_benchmark_env(
-  motion_file: str,
-  ruler: Ruler,
-  num_envs: int,
-  device: str,
-  seed_last_action: bool = True,
+  motion_file: str, ruler: Ruler, num_envs: int, device: str
 ) -> ManagerBasedRlEnv:
-  """The play cfg without randomization, the ruler's failure rules.
-  ``seed_last_action``: see ``G1DMotionCommandCfg``."""
+  """The play cfg without randomization, the ruler's failure rules."""
   cfg = g1d_env_cfg(play=True)
   cfg.events = {}
   cfg.commands["motion"].motion_file = motion_file
-  cfg.commands["motion"].seed_last_action = seed_last_action
   for rule, threshold in zip(FAILURE_RULES, ruler.thresholds(), strict=True):
     if threshold > 0:
       cfg.terminations[rule].params["threshold"] = threshold

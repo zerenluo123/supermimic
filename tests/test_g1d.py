@@ -9,12 +9,8 @@ import torch
 
 from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import (
-  MAX_SEEDED_SPEED,
-  SPEED_LIMITS,
-  effective_action,
   failure_errors,
   heading_yaw,
-  speed_action,
   torso_offset_xz,
   yaw_link_height,
   yaw_quat_from_angle,
@@ -90,16 +86,6 @@ def test_fk_matches_mujoco():
 def test_heading_yaw_roundtrip():
   yaw = torch.linspace(-3.1, 3.1, 13)
   torch.testing.assert_close(heading_yaw(yaw_quat_from_angle(yaw)), yaw)
-
-
-def test_speed_action_inverts_the_speed_saturation():
-  limits = torch.tensor(SPEED_LIMITS)
-  speeds = torch.tensor([[0.34, -0.47, 0.0], [1.2, 0.48, -0.05], [9.0, -9.0, 1.0]])
-  raw = torch.cat([torch.zeros(3, C.NUM_UPPER), speed_action(speeds)], -1)
-  got = effective_action(raw)[:, C.NUM_UPPER :] * limits
-  torch.testing.assert_close(got[:2], speeds[:2])
-  # Beyond the limits: just inside them, finite.
-  torch.testing.assert_close(got[2], MAX_SEEDED_SPEED * limits * speeds[2].sign())
 
 
 def test_failure_errors_on_reference_are_zero():
