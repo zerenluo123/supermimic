@@ -19,6 +19,7 @@ G1-D specifics (from SuperMimic-Reproduced, g1d):
 from __future__ import annotations
 
 import copy
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -54,6 +55,7 @@ from supermimic.g1d.robot import (
   COLLISION_GEOMS,
   default_state_q,
   get_g1d_robot_cfg,
+  stiff_drive_params,
   upper_action_scale,
 )
 from supermimic.representations import (
@@ -189,6 +191,10 @@ class G1DAction(ActionTerm):
   and column speeds); ``scale``, ``_offset`` and ``tanh_mask`` are what
   ``Dynamics.proc`` reads. The joint targets subtract the encoder bias, as mjlab's
   ``JointPositionAction``.
+
+  ``cfg.stiff_chassis``: the (vx, wz) command passes a first-order filter (TAU) and
+  stiff, traction-limited chassis drives hold the filtered speed, so the upper body
+  cannot push the chassis around; otherwise the drives themselves are the TAU lag.
   """
 
   cfg: G1DActionCfg
@@ -209,6 +215,45 @@ class G1DAction(ActionTerm):
     self._upper_target = torch.zeros(self.num_envs, C.NUM_UPPER, device=dev)
     self._base_vel = torch.zeros(self.num_envs, 3, device=dev)
     self._lift_vel = torch.zeros(self.num_envs, 2, device=dev)
+    self.plant = {"chassis": "stiff" if cfg.stiff_chassis else "soft"}
+    if cfg.stiff_chassis:
+      self._stiffen_chassis_drives()
+      self._alpha = 1.0 - math.exp(-env.physics_dt / C.TAU)
+      self._cmd_vel = torch.zeros(self.num_envs, 2, device=dev)
+      self._filt_vel = torch.zeros(self.num_envs, 2, device=dev)
+      # A reset writes the start velocity after this term resets: restart the
+      # filter from the chassis speed at the next step.
+      self._restart = torch.ones(self.num_envs, dtype=torch.bool, device=dev)
+
+  def _stiffen_chassis_drives(self) -> None:
+    """Chassis velocity gains over STIFF_LOOP_TAU and traction force limits, in the
+    compiled model and every world (no event randomizes these actuators)."""
+    sim = self._env.sim
+    p = stiff_drive_params()
+    gains = (p["kv_xy"], p["kv_xy"], p["kv_yaw"])
+    limits = (C.CHASSIS_FORCE_LIMIT, C.CHASSIS_FORCE_LIMIT, C.CHASSIS_TORQUE_LIMIT)
+
+    def world_rows(field: str):
+      # A field nothing expanded is one row shared by every world.
+      return slice(None) if field in sim.expanded_fields else 0
+
+    for joint, kv, limit in zip(C.BASE_JOINTS, gains, limits, strict=True):
+      i = sim.mj_model.actuator(f"{self.cfg.entity_name}/{joint}").id
+      sim.mj_model.actuator_gainprm[i, 0] = kv
+      sim.mj_model.actuator_biasprm[i, 2] = -kv
+      sim.mj_model.actuator_forcerange[i] = (-limit, limit)
+      sim.model.actuator_gainprm[world_rows("actuator_gainprm"), i, 0] = kv
+      sim.model.actuator_biasprm[world_rows("actuator_biasprm"), i, 2] = -kv
+      w = world_rows("actuator_forcerange")
+      sim.model.actuator_forcerange[w, i, 0] = -limit
+      sim.model.actuator_forcerange[w, i, 1] = limit
+
+  def _chassis_speed(self) -> torch.Tensor:
+    """(forward speed along the heading, yaw rate) of the chassis."""
+    q, v = self._entity.data.joint_pos, self._entity.data.joint_vel
+    yaw = q[:, self.jm.base[2]]
+    fwd = v[:, self.jm.base[0]] * yaw.cos() + v[:, self.jm.base[1]] * yaw.sin()
+    return torch.stack([fwd, v[:, self.jm.base[2]]], -1)
 
   @property
   def action_dim(self) -> int:
@@ -225,24 +270,44 @@ class G1DAction(ActionTerm):
     bias = robot.data.encoder_bias[:, self.upper_ids]
     self._upper_target = proc[:, : C.NUM_UPPER] - bias
     vx, wz, vz = proc[:, C.NUM_UPPER :].unbind(-1)
+    self._lift_vel = (0.5 * vz).unsqueeze(-1).expand(-1, 2)
+    if self.cfg.stiff_chassis:
+      self._cmd_vel = torch.stack([vx, wz], -1)
+      self._filt_vel = torch.where(
+        self._restart.unsqueeze(-1), self._chassis_speed(), self._filt_vel
+      )
+      self._restart.zero_()
+      return
     # Differential drive: the forward speed is along the heading, never sideways.
     yaw = robot.data.joint_pos[:, self.jm.base[2]]
     self._base_vel = torch.stack([vx * yaw.cos(), vx * yaw.sin(), wz], -1)
-    self._lift_vel = (0.5 * vz).unsqueeze(-1).expand(-1, 2)
 
   def apply_actions(self) -> None:
     robot = self._entity
+    if self.cfg.stiff_chassis:  # one filter step per physics step
+      self._filt_vel += self._alpha * (self._cmd_vel - self._filt_vel)
+      fwd, wz = self._filt_vel.unbind(-1)
+      yaw = robot.data.joint_pos[:, self.jm.base[2]]
+      self._base_vel = torch.stack([fwd * yaw.cos(), fwd * yaw.sin(), wz], -1)
     robot.set_joint_position_target(self._upper_target, joint_ids=self.upper_ids)
     robot.set_joint_velocity_target(self._base_vel, joint_ids=self.base_ids)
     # The lift's gravity feed-forward lives in its actuator.
     robot.set_joint_velocity_target(self._lift_vel, joint_ids=self.lift_ids)
 
   def reset(self, env_ids=None) -> None:
-    self._raw[slice(None) if env_ids is None else env_ids] = 0.0
+    ids = slice(None) if env_ids is None else env_ids
+    self._raw[ids] = 0.0
+    if self.cfg.stiff_chassis:
+      self._restart[ids] = True
 
 
 @dataclass(kw_only=True)
 class G1DActionCfg(ActionTermCfg):
+  stiff_chassis: bool = False
+  """Stiff, traction-limited chassis drives behind a TAU command filter (see
+  ``G1DAction``); False keeps the soft TAU drives of SuperMimic-Reproduced. The
+  checkpoint records it (``run.json`` "plant"), and evaluation follows it."""
+
   def build(self, env: ManagerBasedRlEnv) -> G1DAction:
     return G1DAction(self, env)
 

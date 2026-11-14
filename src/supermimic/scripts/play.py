@@ -105,6 +105,9 @@ def play(task_id: str, cfg: PlayConfig) -> None:
     env_cfg.commands["motion"].viz.ghost_color = (0.1, 0.85, 0.2, 0.6)
     if cfg.visual_mesh_dir is not None:
       env_cfg.scene.entities["robot"] = get_g1d_robot_cfg(cfg.visual_mesh_dir)
+    if cfg.checkpoint_dir is not None:  # the chassis model it trained on
+      plant = run_info.get("plant", {"chassis": "soft"})
+      env_cfg.actions["joint_pos"].stiff_chassis = plant["chassis"] == "stiff"
 
   command_term = env_cfg.commands["motion"]
   assert isinstance(command_term, MotionCommandCfg)

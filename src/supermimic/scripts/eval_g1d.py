@@ -54,6 +54,7 @@ def main(
   import supermimic.tasks  # noqa: F401
   from supermimic.g1d.benchmark import (
     RULERS,
+    checkpoint_plant,
     load_actor,
     make_benchmark_env,
     run_benchmark,
@@ -69,9 +70,14 @@ def main(
     num_clips = len(np.load(Path(files[0]) / "motion_ends.npy"))
   else:
     num_clips = len(files)
+  # Every checkpoint of a run trained on the same plant (load_actor checks it).
+  first = next(iter(sorted(run_dir.glob("checkpoints/*/run.json"))), None)
+  if first is None:
+    raise SystemExit(f"{run_dir}: no checkpoint with run.json yet")
+  plant = checkpoint_plant(first.parent)
   envs = {
     name: make_benchmark_env(
-      motion_file, RULERS[name], min(num_envs, num_clips), device
+      motion_file, RULERS[name], min(num_envs, num_clips), device, plant
     )
     for name in rulers
   }

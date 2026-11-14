@@ -95,6 +95,14 @@ def drive_params() -> dict[str, float]:
   }
 
 
+def stiff_drive_params() -> dict[str, float]:
+  """Chassis velocity-loop gains of the stiff chassis: the drive_params masses and
+  inertia over STIFF_LOOP_TAU instead of TAU."""
+  p = drive_params()
+  scale = C.TAU / C.STIFF_LOOP_TAU
+  return {"kv_xy": p["kv_xy"] * scale, "kv_yaw": p["kv_yaw"] * scale}
+
+
 def _motor(kind: str) -> tuple[float, float, float, float]:
   """(stiffness, damping, effort, armature) of an upper-body motor class."""
   if kind == "5020":

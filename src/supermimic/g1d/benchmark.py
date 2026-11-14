@@ -67,13 +67,26 @@ class ClipResult:
   joint_err_mean: float = 0.0
 
 
+def checkpoint_plant(checkpoint_dir: Path) -> dict:
+  """The plant a checkpoint trained on (``run.json`` "plant"); checkpoints saved before
+  it was recorded trained on the soft chassis."""
+  run = json.loads((Path(checkpoint_dir) / "run.json").read_text())
+  return run.get("plant", {"chassis": "soft"})
+
+
 def make_benchmark_env(
-  motion_file: str, ruler: Ruler, num_envs: int, device: str
+  motion_file: str,
+  ruler: Ruler,
+  num_envs: int,
+  device: str,
+  plant: dict | None = None,
 ) -> ManagerBasedRlEnv:
-  """The play cfg without randomization, the ruler's failure rules."""
+  """The play cfg without randomization, the ruler's failure rules, on ``plant``
+  (``checkpoint_plant``; default the soft chassis)."""
   cfg = g1d_env_cfg(play=True)
   cfg.events = {}
   cfg.commands["motion"].motion_file = motion_file
+  cfg.actions["joint_pos"].stiff_chassis = (plant or {}).get("chassis") == "stiff"
   for rule, threshold in zip(FAILURE_RULES, ruler.thresholds(), strict=True):
     if threshold > 0:
       cfg.terminations[rule].params["threshold"] = threshold
@@ -90,6 +103,12 @@ def load_actor(
   and its history length."""
   run = json.loads((checkpoint_dir / "run.json").read_text())
   cfg = load_runner_cfg({"runner_cfg": run["runner_cfg"]})
+  env_plant = env.action_manager.get_term("joint_pos").plant
+  if checkpoint_plant(checkpoint_dir) != env_plant:
+    raise ValueError(
+      f"{checkpoint_dir} trained on {checkpoint_plant(checkpoint_dir)}, the env is "
+      f"{env_plant}: build it with plant=checkpoint_plant(...)"
+    )
   obs, _ = env.reset()
   full_dim, num_goals = unpack_obs_dims(obs)
   rep = create_representation(

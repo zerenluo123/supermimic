@@ -16,7 +16,7 @@ from supermimic.g1d.env_cfg import (
   yaw_quat_from_angle,
 )
 from supermimic.g1d.kinematics import G1DForwardKinematics
-from supermimic.g1d.robot import load_model
+from supermimic.g1d.robot import drive_params, load_model, stiff_drive_params
 
 BODIES = (*C.TRACKED_BODIES, "Yaw_Link")
 
@@ -111,3 +111,21 @@ def test_failure_errors_on_reference_are_zero():
   pos3, quat3, _, _ = fk(moved, root_quat, joints, zero, zero, joints)
   err = failure_errors(moved, pos3, quat3, root_quat, pos, quat, offset)
   torch.testing.assert_close(err, torch.tensor([[0.2, 0.0, 0.0]]), atol=1e-5, rtol=0)
+
+
+def test_stiff_chassis_gains_are_the_soft_ones_over_the_loop_time():
+  soft, stiff = drive_params(), stiff_drive_params()
+  for key in ("kv_xy", "kv_yaw"):
+    assert stiff[key] == pytest.approx(soft[key] * C.TAU / C.STIFF_LOOP_TAU)
+
+
+def test_checkpoint_plant_defaults_to_the_soft_chassis(tmp_path):
+  import json
+
+  from supermimic.g1d.benchmark import checkpoint_plant
+
+  (tmp_path / "run.json").write_text(json.dumps({"step": 0, "runner_cfg": {}}))
+  assert checkpoint_plant(tmp_path) == {"chassis": "soft"}
+  run = {"step": 0, "runner_cfg": {}, "plant": {"chassis": "stiff"}}
+  (tmp_path / "run.json").write_text(json.dumps(run))
+  assert checkpoint_plant(tmp_path) == {"chassis": "stiff"}

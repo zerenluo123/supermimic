@@ -61,8 +61,16 @@ UPPER_TRACKED_BODIES = TRACKED_BODIES[1:]
 # Chassis and column commands are MAX * tanh(a), the same in the simulator and in
 # imagination: a hard clip lets the policy push the raw action far past it.
 VX_MAX, WZ_MAX, VZ_MAX = 1.5, 0.6, 0.0765
-# First-order time constant of the chassis / column velocity drives.
+# First-order time constant of the chassis / column velocity drives. A placeholder from
+# supermimic_vibed, not a measurement.
 TAU = 0.15
+# Stiff chassis (G1DActionCfg.stiff_chassis): the command reaches the drives through a
+# first-order filter with TAU, and the drives hold their target within STIFF_LOOP_TAU,
+# up to the traction limits below. Estimates until the chassis is measured: friction
+# ~0.8 * 70.7 kg * g per axis, and that force at ~0.18 m (half the wheel track) for yaw.
+STIFF_LOOP_TAU = 0.005
+CHASSIS_FORCE_LIMIT = 550.0  # N, each of x and y
+CHASSIS_TORQUE_LIMIT = 100.0  # N·m, yaw
 
 # Upper-body PD follows the G1 motor model (BeyondMimic gains). The waist pitch is a
 # self-locking motor with the Unitree example gains; its effort is a placeholder.

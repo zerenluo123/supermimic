@@ -116,6 +116,8 @@ def main(
     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     cfg = g1d_env_cfg(play=True)
     cfg.commands["motion"].motion_file = motion_file
+    plant = json.loads((checkpoint_dir / "run.json").read_text()).get("plant", {})
+    cfg.actions["joint_pos"].stiff_chassis = plant.get("chassis") == "stiff"
     # Keep the threshold schema used to bind the representation, but suppress
     # resets while recording (including motion-end and time limits).
     for term in cfg.terminations.values():

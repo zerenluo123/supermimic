@@ -668,6 +668,13 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
     for f in files:
       shutil.copy2(f, keep / Path(f).name)
     meta = {"step": step, "task_id": self.task_id, "runner_cfg": asdict(self.cfg)}
+    # The plant the actor trained on (the G1-D chassis model), for evaluation.
+    actions = self.env.unwrapped.action_manager
+    plant = {}
+    for name in actions.active_terms:
+      plant.update(getattr(actions.get_term(name), "plant", {}))
+    if plant:
+      meta["plant"] = plant
     (keep / "run.json").write_text(json.dumps(meta, indent=1, default=str))
 
   def _update_actor_normalization(self, actor_inputs: tuple[TensorDict, ...]) -> None:
