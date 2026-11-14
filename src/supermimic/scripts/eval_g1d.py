@@ -45,8 +45,11 @@ def main(
   watch: bool = False,
   every: int = 1,
   steps: tuple[str, ...] = (),
+  stop_file: Path | None = None,
 ) -> None:
-  """``--steps``: only these checkpoints (directory names, e.g. ``00060000``)."""
+  """``--steps``: only these checkpoints (directory names, e.g. ``00060000``).
+  ``--stop-file``: with ``--watch``, stop once this file exists (training wrote it
+  when it finished) and every checkpoint is evaluated."""
   import mjlab.tasks  # noqa: F401
   import numpy as np
   import torch
@@ -88,8 +91,13 @@ def main(
       csv.write_text(",".join(COLS) + "\n")
     done[name] = {line.split(",")[0] for line in csv.read_text().splitlines()[1:]}
   while True:
+    # Snapshot before scanning: if training finishes during this pass, scan once
+    # more so its final checkpoint cannot be missed.
+    stopping = stop_file is not None and stop_file.exists()
     ckpts = sorted(
-      p for p in (run_dir / "checkpoints").glob("*") if (p / "actor.pt").exists()
+      p
+      for p in (run_dir / "checkpoints").glob("*")
+      if (p / "actor.pt").exists() and (p / "run.json").exists()
     )
     ckpts = [c for i, c in enumerate(ckpts) if i % every == 0]
     if steps:
@@ -131,7 +139,7 @@ def main(
         done[name].add(ckpt.name)
         del actor
         torch.cuda.empty_cache()
-    if not watch:
+    if not watch or stopping:
       break
     time.sleep(60)
 
