@@ -19,7 +19,9 @@ G1-D specifics (from SuperMimic-Reproduced, g1d):
 from __future__ import annotations
 
 import copy
+import json
 import math
+import os
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -63,6 +65,7 @@ from supermimic.representations import (
   motion_anchor_window,
   motion_goal_window,
 )
+from supermimic.utils import distributed
 from supermimic.utils.helpers import rotation_error_magnitude
 from supermimic.utils.tracking_reward import _reanchor_targets
 
@@ -351,12 +354,72 @@ HALF_FIELDS = (
 )
 
 
+MOTION_FIELDS = (
+  "root_pos_w",
+  "root_quat_w",
+  "root_lin_vel_w",
+  "root_ang_vel_w",
+  "joint_pos",
+  "joint_vel",
+)
+
+
+def shard_clips(motion_ends: np.ndarray, rank: int, world: int) -> np.ndarray:
+  """Clips of one rank's shard: every ``world``-th clip from ``rank``, so each shard
+  mixes the datasets of a packed directory (stored one after another) alike."""
+  return np.arange(rank, len(motion_ends), world)
+
+
+def load_motion_shard(
+  root: str, fk, loader_cls, rank: int, world: int, half_precision: bool, device: str
+):
+  """A ``MotionLoader`` over one rank's shard (``shard_clips``) of a packed motion
+  directory: only the shard's frames are read (memory-mapped) and kept."""
+  ends = np.load(os.path.join(root, "motion_ends.npy"))
+  with open(os.path.join(root, "joint_names.json")) as fh:
+    joints = json.load(fh)
+  if joints != fk.joint_names:
+    raise ValueError(f"motion joints {joints} are not the robot's {fk.joint_names}")
+  names_path = os.path.join(root, "motion_names.json")
+  names = None
+  if os.path.exists(names_path):
+    with open(names_path) as fh:
+      names = json.load(fh)
+  starts = np.concatenate([[0], ends[:-1]])
+  clips = shard_clips(ends, rank, world)
+  lengths = ends[clips] - starts[clips]
+  motion = object.__new__(loader_cls)
+  for name in MOTION_FIELDS:
+    src = np.load(os.path.join(root, f"{name}.npy"), mmap_mode="r")
+    out = np.empty((int(lengths.sum()), src.shape[1]), dtype=src.dtype)
+    row = 0
+    for c, n in zip(clips, lengths, strict=True):
+      out[row : row + n] = src[starts[c] : starts[c] + n]
+      row += n
+    table = torch.from_numpy(out)
+    if half_precision and name in HALF_FIELDS:
+      setattr(motion, name, HalfTable(table, device))
+    else:
+      setattr(motion, name, table.to(device=device, dtype=torch.float32))
+  motion.fk = fk
+  motion.time_step_total = int(lengths.sum())
+  motion.motion_ends = torch.as_tensor(
+    np.cumsum(lengths), dtype=torch.long, device=device
+  )
+  all_names = names or [f"clip_{i}" for i in range(len(ends))]
+  motion.motion_names = [all_names[c] for c in clips]
+  return motion
+
+
 @contextmanager
-def _g1d_motion_loading(body_names: tuple[str, ...], half_precision: bool):
+def _g1d_motion_loading(
+  body_names: tuple[str, ...], half_precision: bool, shard: bool = False
+):
   """Have ``MotionCommand.__init__`` build the G1-D kinematics (mjlab's needs a
   free-joint root) and, with ``half_precision``, a motion table that keeps
   ``HALF_FIELDS`` at half precision (loaded on the CPU first, so the float32
-  copy never reaches the GPU)."""
+  copy never reaches the GPU). With ``shard`` and several ranks, each rank loads
+  only its shard of a packed directory (``load_motion_shard``)."""
   original_fk = commands_module.ForwardKinematics
   original_loader = commands_module.MotionLoader
 
@@ -365,6 +428,14 @@ def _g1d_motion_loading(body_names: tuple[str, ...], half_precision: bool):
     return G1DForwardKinematics(mj_model, body_names, device=device)
 
   def build_loader(motion_file, fk, device="cpu"):
+    world = distributed.world_size()
+    if shard and world > 1:
+      files = commands_module._resolve_motion_file(motion_file)
+      if not (len(files) == 1 and os.path.isdir(files[0])):
+        raise ValueError("shard_motions needs a packed motion directory")
+      return load_motion_shard(
+        files[0], fk, original_loader, distributed.rank(), world, half_precision, device
+      )
     if not half_precision:
       return original_loader(motion_file, fk, device=device)
     motion = original_loader(motion_file, fk, device="cpu")
@@ -415,7 +486,9 @@ class G1DMotionCommand(MotionCommand):
   clip from its first frame)."""
 
   def __init__(self, cfg: G1DMotionCommandCfg, env: ManagerBasedRlEnv):
-    with _g1d_motion_loading(tuple(cfg.body_names), cfg.half_precision_motions):
+    with _g1d_motion_loading(
+      tuple(cfg.body_names), cfg.half_precision_motions, cfg.shard_motions
+    ):
       super().__init__(cfg, env)
     self.jm = G1DJointMap(self.robot.joint_names)
     self.state_limits = state_soft_limits(self.robot)
@@ -558,6 +631,10 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   half_precision_motions: bool = False
   """Keep the motion table at half precision (``HALF_FIELDS``) to fit a large
   library next to training; float32 otherwise."""
+  shard_motions: bool = False
+  """With several ranks, each loads only its shard of the packed motion directory
+  (every world-size-th clip), so a card holds 1 / world of the library instead of
+  all of it. Evaluation (one rank) always loads the whole directory."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)

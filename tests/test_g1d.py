@@ -129,3 +129,42 @@ def test_checkpoint_plant_defaults_to_the_soft_chassis(tmp_path):
   run = {"step": 0, "runner_cfg": {}, "plant": {"chassis": "stiff"}}
   (tmp_path / "run.json").write_text(json.dumps(run))
   assert checkpoint_plant(tmp_path) == {"chassis": "stiff"}
+
+
+def test_motion_shards_partition_a_packed_library(tmp_path):
+  import json
+  from types import SimpleNamespace
+
+  from mjlab.tasks.tracking.mdp.commands import MotionLoader
+
+  from supermimic.g1d.env_cfg import MOTION_FIELDS, load_motion_shard
+
+  rng = np.random.default_rng(0)
+  lengths = np.array([5, 3, 7, 2, 6, 4, 9])
+  ends = np.cumsum(lengths)
+  widths = {"root_pos_w": 3, "root_quat_w": 4, "root_lin_vel_w": 3}
+  widths |= {"root_ang_vel_w": 3, "joint_pos": C.NJ, "joint_vel": C.NJ}
+  full = {}
+  for name in MOTION_FIELDS:
+    dtype = np.float32 if name == "root_pos_w" else np.float16
+    full[name] = rng.normal(size=(ends[-1], widths[name])).astype(dtype)
+    np.save(tmp_path / f"{name}.npy", full[name])
+  np.save(tmp_path / "motion_ends.npy", ends)
+  (tmp_path / "joint_names.json").write_text(json.dumps(list(C.STATE_JOINTS)))
+  names = [f"m{i}" for i in range(len(lengths))]
+  (tmp_path / "motion_names.json").write_text(json.dumps(names))
+  fk = SimpleNamespace(joint_names=list(C.STATE_JOINTS))
+  starts = np.concatenate([[0], ends[:-1]])
+  seen = []
+  for rank in range(3):
+    shard = load_motion_shard(str(tmp_path), fk, MotionLoader, rank, 3, True, "cpu")
+    clips = list(range(rank, len(lengths), 3))
+    assert shard.motion_names == [names[c] for c in clips]
+    assert shard.motion_ends.tolist() == np.cumsum(lengths[clips]).tolist()
+    assert shard.time_step_total == int(lengths[clips].sum())
+    for name in MOTION_FIELDS:
+      want = np.concatenate([full[name][starts[c] : ends[c]] for c in clips])
+      got = getattr(shard, name)[torch.arange(shard.time_step_total)].numpy()
+      np.testing.assert_allclose(got, want.astype(np.float32))
+    seen += clips
+  assert sorted(seen) == list(range(len(lengths)))
