@@ -39,7 +39,7 @@ def main(
   run_dir: Path,
   motion_file: str,
   tag: str,
-  rulers: tuple[str, ...] = ("train", "public", "public_nocol"),
+  rulers: tuple[str, ...] = ("train",),
   device: str = "cuda:0",
   num_envs: int = 1024,
   watch: bool = False,
@@ -47,7 +47,9 @@ def main(
   steps: tuple[str, ...] = (),
   stop_file: Path | None = None,
 ) -> None:
-  """``--steps``: only these checkpoints (directory names, e.g. ``00060000``).
+  """``--rulers``: the training rule by default; ``public`` / ``public_nocol`` (the
+  0.5 m chassis rule of the old Reproduced reports) only for those comparisons.
+  ``--steps``: only these checkpoints (directory names, e.g. ``00060000``).
   ``--stop-file``: with ``--watch``, stop once this file exists (training wrote it
   when it finished) and every checkpoint is evaluated."""
   import mjlab.tasks  # noqa: F401
