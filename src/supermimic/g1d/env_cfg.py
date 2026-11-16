@@ -411,6 +411,16 @@ def load_motion_shard(
   return motion
 
 
+def set_bin_count(cmd, bin_count: int) -> None:
+  """Re-cut a ``MotionCommand``'s reset-sampling timeline into ``bin_count`` bins
+  (its failure counts and external distribution restart uniform)."""
+  cmd.bin_count = int(bin_count)
+  dev = cmd._external_probs.device
+  cmd.bin_failed_count = torch.zeros(cmd.bin_count, device=dev)
+  cmd._current_bin_failed = torch.zeros(cmd.bin_count, device=dev)
+  cmd._external_probs = torch.full((cmd.bin_count,), 1.0 / cmd.bin_count, device=dev)
+
+
 @contextmanager
 def _g1d_motion_loading(
   body_names: tuple[str, ...], half_precision: bool, shard: bool = False
@@ -492,6 +502,9 @@ class G1DMotionCommand(MotionCommand):
       super().__init__(cfg, env)
     self.jm = G1DJointMap(self.robot.joint_names)
     self.state_limits = state_soft_limits(self.robot)
+    world = distributed.world_size()
+    if cfg.shard_motions and cfg.shard_fine_bins and world > 1:
+      set_bin_count(self, self.bin_count * world)
     if float(env.scene.env_origins.abs().max()) != 0.0:
       raise ValueError("the G1-D runs with every env origin at 0 (env_spacing=0)")
 
@@ -635,6 +648,11 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   """With several ranks, each loads only its shard of the packed motion directory
   (every world-size-th clip), so a card holds 1 / world of the library instead of
   all of it. Evaluation (one rank) always loads the whole directory."""
+  shard_fine_bins: bool = False
+  """With ``shard_motions``, cut each shard into world-size times as many
+  reset-sampling bins, about as many as the whole library has: every rank's reset
+  sampler then gets the samples per bin of an unsharded run instead of
+  world-size times more."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)

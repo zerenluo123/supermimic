@@ -168,3 +168,32 @@ def test_motion_shards_partition_a_packed_library(tmp_path):
       np.testing.assert_allclose(got, want.astype(np.float32))
     seen += clips
   assert sorted(seen) == list(range(len(lengths)))
+
+
+def test_fine_bins_cover_the_shard_timeline():
+  from types import SimpleNamespace
+
+  from mjlab.tasks.tracking.mdp.commands import MotionCommand
+
+  from supermimic.g1d.env_cfg import set_bin_count
+
+  total = 1003
+  metrics = {k: torch.zeros(1) for k in ("sampling_entropy", "sampling_top1_prob")}
+  metrics["sampling_top1_bin"] = torch.zeros(1)
+  cmd = SimpleNamespace(
+    bin_count=101,
+    _external_probs=torch.full((101,), 1 / 101),
+    motion=SimpleNamespace(time_step_total=total),
+    metrics=metrics,
+    device="cpu",
+  )
+  set_bin_count(cmd, 4 * cmd.bin_count)
+  assert cmd.bin_count == 404
+  assert cmd._external_probs.shape == (404,) and cmd.bin_failed_count.shape == (404,)
+  for b in (0, 403):  # all mass on the first, then the last bin
+    probs = torch.zeros(404)
+    probs[b] = 1.0
+    frames = MotionCommand._sample_bins(cmd, torch.arange(64), probs)
+    assert int(frames.min()) >= 0 and int(frames.max()) <= total - 2
+    lo, hi = b * (total - 2) // 404, (b + 1) * (total - 2) // 404
+    assert int(frames.min()) >= lo and int(frames.max()) <= max(hi, lo + 1)
