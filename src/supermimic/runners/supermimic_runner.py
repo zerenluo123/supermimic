@@ -638,7 +638,9 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
       )
       self._advance_sim_history(next_obs["actor"].to(self.device), dones)
       terminated = self.env.unwrapped.termination_manager.terminated
-      self.logger.process_env_step(rewards, terminated, extras)
+      # Only rank 0 logs, and logging is what clears the buffered extras.
+      if is_main():
+        self.logger.process_env_step(rewards, terminated, extras)
 
       if self._sampler is not None:
         # A failure on a step that also times out counts as the time-out.
