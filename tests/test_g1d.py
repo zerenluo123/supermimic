@@ -88,6 +88,24 @@ def test_heading_yaw_roundtrip():
   torch.testing.assert_close(heading_yaw(yaw_quat_from_angle(yaw)), yaw)
 
 
+def test_fk_gradients_match_finite_differences():
+  """Gradients flow through the pass recomputed in the backward."""
+  fk = G1DForwardKinematics(load_model(), BODIES, dtype=torch.float64)
+  torch.manual_seed(0)
+  f64 = torch.float64
+  quat = torch.randn(2, 4, dtype=f64)
+  inputs = [
+    torch.randn(2, 3, dtype=f64),
+    quat / quat.norm(dim=-1, keepdim=True),
+    0.3 * torch.randn(2, C.NJ, dtype=f64),
+    torch.randn(2, 3, dtype=f64),
+    torch.randn(2, 3, dtype=f64),
+    torch.randn(2, C.NJ, dtype=f64),
+  ]
+  inputs = [x.requires_grad_() for x in inputs]
+  assert torch.autograd.gradcheck(fk, inputs)
+
+
 def test_failure_errors_on_reference_are_zero():
   model = load_model()
   fk = G1DForwardKinematics(model, C.TRACKED_BODIES)

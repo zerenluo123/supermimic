@@ -851,9 +851,42 @@ def _step_terms(env: ManagerBasedRlEnv) -> dict[str, torch.Tensor]:
     return cache[1]
   cmd = _cmd(env)
   state = g1d_full_state(env)
+  offset = env.__dict__.setdefault(
+    "_g1d_torso_offset", torso_offset_xz(env.sim.mj_model)
+  )
+  terms = (_compiled_terms_from if state.is_cuda else _terms_from)(
+    cmd.motion.fk,
+    state,
+    cmd._body_pos_w,
+    cmd._body_quat_w,
+    cmd._body_lin_vel_w,
+    cmd._body_ang_vel_w,
+    env.action_manager.action,
+    env.action_manager.prev_action,
+    cmd.state_limits,
+    cmd.joint_pos,
+    offset,
+  )
+  env.__dict__["_g1d_step_terms"] = (key, terms)
+  return terms
+
+
+def _terms_from(
+  fk: G1DForwardKinematics,
+  state: torch.Tensor,
+  ref_pos: torch.Tensor,
+  ref_quat: torch.Tensor,
+  ref_lin_vel: torch.Tensor,
+  ref_ang_vel: torch.Tensor,
+  action: torch.Tensor,
+  prev_action: torch.Tensor,
+  state_limits: torch.Tensor,
+  ref_joint_pos: torch.Tensor,
+  offset: tuple[float, float],
+) -> dict[str, torch.Tensor]:
+  """``_step_terms`` from the post-step state and the reference."""
   root_pos, root_quat, qj, lin, ang, vj = _split_state(state)
-  pos, quat, lin_b, ang_b = cmd.motion.fk(root_pos, root_quat, qj, lin, ang, vj)
-  ref_pos, ref_quat = cmd._body_pos_w, cmd._body_quat_w
+  pos, quat, lin_b, ang_b = fk(root_pos, root_quat, qj, lin, ang, vj)
   err = tracking_errors(
     root_pos,
     root_quat,
@@ -863,30 +896,29 @@ def _step_terms(env: ManagerBasedRlEnv) -> dict[str, torch.Tensor]:
     ang_b,
     ref_pos,
     ref_quat,
-    cmd._body_lin_vel_w,
-    cmd._body_ang_vel_w,
+    ref_lin_vel,
+    ref_ang_vel,
   )
   terms = {
     name: torch.exp(-err[:, i] / std**2)
     for i, (name, _, std) in enumerate(TRACKING_TERMS)
   }
-  action = effective_action(env.action_manager.action)
-  prev = effective_action(env.action_manager.prev_action)
+  action, prev = effective_action(action), effective_action(prev_action)
   terms["action_rate_l2"] = ((action - prev) ** 2).sum(-1)
-  lo, hi = cmd.state_limits.unbind(-1)
+  lo, hi = state_limits.unbind(-1)
   terms["joint_limit"] = ((lo - qj).clamp(min=0) + (qj - hi).clamp(min=0)).sum(-1)
-  offset = env.__dict__.setdefault(
-    "_g1d_torso_offset", torso_offset_xz(env.sim.mj_model)
-  )
   terms["failure"] = failure_errors(
     root_pos, pos, quat, root_quat, ref_pos, ref_quat, offset
   )
   tgt_pos, _ = _reanchor_targets(ref_pos, ref_quat, root_pos, root_quat)
   terms["upper_err"] = (tgt_pos[:, 1:] - pos[:, 1:]).norm(dim=-1).mean(-1)
-  terms["joint_err"] = (qj[:, 1:] - cmd.joint_pos[:, 1:]).abs().mean(-1)
-  terms["column_err"] = (qj[:, 0] - cmd.joint_pos[:, 0]).abs()
-  env.__dict__["_g1d_step_terms"] = (key, terms)
+  terms["joint_err"] = (qj[:, 1:] - ref_joint_pos[:, 1:]).abs().mean(-1)
+  terms["column_err"] = (qj[:, 0] - ref_joint_pos[:, 0]).abs()
   return terms
+
+
+# The env step is launch-bound: eagerly these terms are some 900 small kernels.
+_compiled_terms_from = torch.compile(_terms_from, dynamic=False)
 
 
 def g1d_reward_term(env: ManagerBasedRlEnv, name: str) -> torch.Tensor:
