@@ -119,6 +119,10 @@ def load_actor(
     env.cfg.decimation,
     env.scene["robot"].data.default_joint_pos[0],
     actor_obs_mode=cfg.actor_obs,
+    g1d_actor_goal=cfg.g1d_actor_goal,
+    g1d_critic_urr=cfg.g1d_critic_urr,
+    g1d_chassis_window=cfg.g1d_chassis_window,
+    g1d_urr_table=cfg.g1d_urr_table,
   )
   rep.actor_goal_noise = False
   wm = WorldModel(rep, None, None, num_goals, env.action_manager.total_action_dim)  # type: ignore[arg-type]

@@ -56,6 +56,21 @@ class BaseRunnerCfg:
   buffer_size: int = 1000
   representation: str = "gencoord"  # "gencoord" or "maxcoord"
   actor_obs: str = "rep_state"  # "rep_state" or "proprio"
+  g1d_actor_goal: Literal["joints", "urr"] = "joints"
+  """G1-D actor goal per window frame: the reference joints and their velocities, or
+  the reference URR keypoint pose (chest and hands, elbow positions) in that frame's
+  reference chassis frame. The critic keeps the joints."""
+  g1d_critic_urr: bool = False
+  """G1-D: also give the critic the window's URR keypoint poses and twists and the
+  robot's own keypoints."""
+  g1d_chassis_window: bool = False
+  """G1-D actor goal: each window frame's reference chassis position and heading
+  relative to the robot, in place of the current frame's position alone; the
+  odometry noise goes on the robot's own pose."""
+  g1d_urr_table: bool = True
+  """G1-D: tabulate the motion's URR keypoints once (on the GPU); False computes
+  them from the reference joints on each use instead, the same values without the
+  table's memory."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False
@@ -153,6 +168,10 @@ def build_world_model(cfg: BaseRunnerCfg, env, device: str) -> WorldModel:
     env.unwrapped.cfg.decimation,
     default_joint_pos,
     actor_obs_mode=cfg.actor_obs,
+    g1d_actor_goal=cfg.g1d_actor_goal,
+    g1d_critic_urr=cfg.g1d_critic_urr,
+    g1d_chassis_window=cfg.g1d_chassis_window,
+    g1d_urr_table=cfg.g1d_urr_table,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)

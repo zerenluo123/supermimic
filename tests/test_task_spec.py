@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import torch
 
+from supermimic.representations import actor_goal_dim
 from supermimic.tasks.task_spec import (
   TasksCfg,
   make_velocity_task,
@@ -158,6 +159,7 @@ class TestInferenceHelpers:
 class TestResolveTaskSpecs:
   def test_motion_and_velocity(self):
     rep = MagicMock()
+    rep.actor_goal_dim.side_effect = actor_goal_dim
     specs = resolve_task_specs(TasksCfg(), rep, num_goals=87)
     names = [s.name for s in specs]
     assert names == ["motion", "velocity"]

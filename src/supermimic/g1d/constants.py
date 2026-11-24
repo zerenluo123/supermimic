@@ -58,6 +58,28 @@ TRACKED_BODIES = (
 )
 UPPER_TRACKED_BODIES = TRACKED_BODIES[1:]
 
+# URR keypoints (Dyna-2.1 §3.1.1) as the g1d-urr controller places them: the chest
+# 0.2 m above the torso_link origin, the hands at left/right_hand_palm_link (fixed
+# to the wrist yaw links, g1d.xml), the elbows at the elbow links, each a tracked
+# body plus an offset in its frame. The chest and the hands carry an orientation.
+URR_BODIES = (
+  "torso_link",
+  "left_wrist_yaw_link",
+  "right_wrist_yaw_link",
+  "left_elbow_link",
+  "right_elbow_link",
+)
+URR_OFFSETS = (
+  (0.0, 0.0, 0.2),
+  (0.0415, 0.003, 0.0),
+  (0.0415, -0.003, 0.0),
+  (0.0, 0.0, 0.0),
+  (0.0, 0.0, 0.0),
+)
+URR_NUM_ORIENTED = 3
+URR_POSE_DIM = 3 * len(URR_BODIES) + 6 * URR_NUM_ORIENTED  # positions, rot6d: 33
+URR_VEL_DIM = 3 * len(URR_BODIES) + 3 * URR_NUM_ORIENTED  # linear, angular: 24
+
 # Chassis and column commands are MAX * tanh(a), the same in the simulator and in
 # imagination: a hard clip lets the policy push the raw action far past it.
 VX_MAX, WZ_MAX, VZ_MAX = 1.5, 0.6, 0.0765
@@ -119,3 +141,6 @@ COLUMN_POS_NOISE = 0.01
 COLUMN_VEL_NOISE = 0.01
 # Training noise on the reference chassis position the actor sees (odometry error).
 ANCHOR_POS_NOISE = 0.05
+# With the chassis window, the same odometry error on the robot's own pose: half-width
+# of its x, y (``ANCHOR_POS_NOISE``) and yaw (rad), drawn every step.
+ANCHOR_YAW_NOISE = 0.05

@@ -265,8 +265,7 @@ def main(
         _, goal = rep.compute_wm_goal(
           motion, cmd.time_steps, rep.extract_aux_state(obs["full_state"])
         )
-        wm_goal, _ = rep.compute_wm_goal(motion, cmd.time_steps, aux)
-        from supermimic.representations import extract_actor_goal
+        _, wm_actor_goal = rep.compute_wm_goal(motion, cmd.time_steps, aux)
 
         wm_sensor = rep.compute_actor_sensor(
           state,
@@ -288,9 +287,7 @@ def main(
         hist, wm_hist = history(hist, sensor), history(wm_hist, wm_sensor)
         reset_history[:] = False
         action = actor(build_actor_obs_td({"motion": goal}, hist))
-        last_action = actor(
-          build_actor_obs_td({"motion": extract_actor_goal(wm_goal)}, wm_hist)
-        )
+        last_action = actor(build_actor_obs_td({"motion": wm_actor_goal}, wm_hist))
         aux, state = wm.dynamics(state, last_action, aux, sim_ctx)
         obs, reward, _, _, _ = env.step(action)
         terms = _step_terms(env)

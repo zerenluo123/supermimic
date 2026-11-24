@@ -61,8 +61,18 @@ def create_representation(
   decimation: int,
   default_joint_pos: torch.Tensor,
   actor_obs_mode: str,
+  g1d_actor_goal: str = "joints",
+  g1d_critic_urr: bool = False,
+  g1d_chassis_window: bool = False,
+  g1d_urr_table: bool = True,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
+  if name != "g1d" and (
+    g1d_actor_goal != "joints" or g1d_critic_urr or g1d_chassis_window
+  ):
+    raise ValueError(
+      "g1d_actor_goal / g1d_critic_urr / g1d_chassis_window apply to the g1d representation"
+    )
   if name == "gencoord":
     num_joints = infer_num_joints_from_state_dim(full_state_dim)
     rep: StateRepresentation = GenCoordRepresentation(num_joints, default_joint_pos)
@@ -75,7 +85,13 @@ def create_representation(
   elif name == "g1d":
     from supermimic.g1d.representation import G1DRepresentation
 
-    rep = G1DRepresentation(default_joint_pos.device)
+    rep = G1DRepresentation(
+      default_joint_pos.device,
+      actor_goal=g1d_actor_goal,
+      critic_urr=g1d_critic_urr,
+      chassis_window=g1d_chassis_window,
+      urr_table=g1d_urr_table,
+    )
     if full_state_dim != rep.full_state_dim:
       raise ValueError(
         f"G1-D full_state_dim is {rep.full_state_dim}, the env gives {full_state_dim}"
@@ -357,7 +373,11 @@ class StateRepresentation(nn.Module, ABC):
       if self.actor_obs_mode == "rep_state"
       else self.proprio_obs_dim(num_actions)
     )
-    return history_length * sensor_or_state + actor_goal_dim(num_goals)
+    return history_length * sensor_or_state + self.actor_goal_dim(num_goals)
+
+  def actor_goal_dim(self, num_goals: int) -> int:
+    """Width of the actor's goal, :func:`actor_goal_dim` unless overridden."""
+    return actor_goal_dim(num_goals)
 
   def add_proprio_noise(self, obs: torch.Tensor) -> torch.Tensor:
     """Add per-dim uniform proprio jitter — the single noise site shared by the

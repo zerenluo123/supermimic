@@ -194,16 +194,7 @@ class WorldModelEnv(ABC):
     ref_body_pos_w, ref_body_quat_w, ref_body_lin_vel_w, ref_body_ang_vel_w = (
       self._ref_body_state
     )
-    if self._representation_terminates:
-      error = self.representation.normalized_failure_error(
-        next_aux_state, next_rep_state, ref_body_pos_w, ref_body_quat_w
-      )
-      term_prob = torch.sigmoid((error - 1.0) / self._termination_softness)
-    else:
-      term_prob = self._compute_term_prob(
-        next_aux_state, ref_body_pos_w, ref_body_quat_w
-      )
-    reward = self.representation.compute_wm_reward_from_reference(
+    scored = (
       next_rep_state,
       next_aux_state,
       next_joint_state,
@@ -214,6 +205,15 @@ class WorldModelEnv(ABC):
       ref_body_lin_vel_w,
       ref_body_ang_vel_w,
     )
+    if self._representation_terminates:
+      # The failure rules and the reward read the same bodies: one pass for both.
+      error, reward = self.representation.failure_error_and_reward(*scored)
+      term_prob = torch.sigmoid((error - 1.0) / self._termination_softness)
+    else:
+      term_prob = self._compute_term_prob(
+        next_aux_state, ref_body_pos_w, ref_body_quat_w
+      )
+      reward = self.representation.compute_wm_reward_from_reference(*scored)
     return next_aux_state, next_rep_state, next_joint_state, term_prob, reward
 
   def _compute_term_prob(

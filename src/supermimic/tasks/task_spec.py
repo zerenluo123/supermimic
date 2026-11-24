@@ -17,8 +17,6 @@ import torch
 from mjlab.utils.lab_api.math import quat_apply_inverse
 from tensordict import TensorDict
 
-from supermimic.representations import actor_goal_dim
-
 if TYPE_CHECKING:
   from mjlab.tasks.tracking.mdp.commands import MotionLoader
 
@@ -91,7 +89,7 @@ def make_motion_task(representation: "StateRepresentation", num_goals: int) -> T
 
   return TaskSpec(
     name="motion",
-    goal_dim=actor_goal_dim(num_goals),
+    goal_dim=representation.actor_goal_dim(num_goals),
     extract_training_goal=extract,
   )
 
