@@ -62,7 +62,7 @@ def play(task_id: str, cfg: PlayConfig) -> None:
       raise ValueError("--replay-dir is only supported for G1-D")
     from supermimic.g1d.replay_viewer import G1DReplayViewer
 
-    G1DReplayViewer(Path(cfg.replay_dir), cfg.visual_mesh_dir, cfg.port).run()
+    G1DReplayViewer([Path(cfg.replay_dir)], cfg.visual_mesh_dir, cfg.port).run()
     return
   configure_torch_backends()
   device = cfg.device or ("cuda:0" if torch.cuda.is_available() else "cpu")

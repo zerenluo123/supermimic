@@ -6,6 +6,7 @@ import copy
 import json
 import queue
 import time
+from collections.abc import Sequence
 from pathlib import Path
 
 import mujoco
@@ -23,24 +24,63 @@ from supermimic.g1d.replay import (
 from supermimic.g1d.robot import load_spec
 from supermimic.g1d.viewer import clip_markdown
 
+TARGET_RGBA = (0.49, 0.23, 0.93, 1.0)  # the URR target parts (purple)
+WM_RGBA = (0.2, 0.45, 1.0, 1.0)
+
+
+def urr_part_bodies(model: mujoco.MjModel) -> set[int]:
+  """Bodies of the URR parts, drawn as the target the way Dyna draws URR tracking:
+  the chest link alone (no head or logo), each hand with its palm and fingers, each
+  elbow link, and the chassis with its wheels, without the column's outer tube that
+  rides on it."""
+
+  def rigid_root(b: int) -> int:
+    while b > 0 and model.body_jntnum[b] == 0:
+      b = model.body_parentid[b]
+    return b
+
+  chest = model.body(C.URR_BODIES[0]).id
+  roots = {rigid_root(model.body(n).id) for n in (*C.URR_BODIES[1:], C.ROOT_BODY)}
+  return {chest} | {
+    b
+    for b in range(1, model.nbody)
+    if rigid_root(b) in roots and not model.body(b).name.startswith("LZ_")
+  }
+
 
 class G1DReplayViewer:
   def __init__(
     self,
-    replay_dir: Path,
+    replay_dirs: Sequence[Path],
     visual_mesh_dir: str | None = None,
     port: int = 8080,
     host: str = "0.0.0.0",
+    labels: Sequence[str] = (),
   ):
-    self.directory = replay_dir
-    self.index = json.loads((replay_dir / "index.json").read_text())
-    if self.index["version"] != FORMAT_VERSION:
-      raise ValueError("Unsupported recording version")
-    self.entries = [
-      v for _, v in sorted(self.index["clips"].items(), key=lambda kv: int(kv[0]))
-    ]
+    """``replay_dirs``: recordings of one robot at one rate, listed together;
+    ``labels`` (one per directory, optional) prefix their clips as ``[label] name``."""
+    if labels and len(labels) != len(replay_dirs):
+      raise ValueError("Give one label per recording directory, or none")
+    self.entries = []
+    self.recordings = []
+    for i, directory in enumerate(replay_dirs):
+      index = json.loads((directory / "index.json").read_text())
+      if index["version"] != FORMAT_VERSION:
+        raise ValueError(f"Unsupported recording version in {directory}")
+      self.recordings.append(index)
+      prefix = f"[{labels[i]}] " if labels else ""
+      for _, v in sorted(index["clips"].items(), key=lambda kv: int(kv[0])):
+        # ``title`` names the clip in the panel; ``source`` is its recording.
+        self.entries.append({**v, "title": prefix + v["name"], "source": i})
+    self.directories = list(replay_dirs)
     if not self.entries:
-      raise ValueError("No completed clips in this cache")
+      raise ValueError("No completed clips in these caches")
+    self.index = self.recordings[0]
+    if any(
+      r["dt"] != self.index["dt"] or r["joint_names"] != self.index["joint_names"]
+      for r in self.recordings
+    ):
+      raise ValueError("Recordings differ in rate or joint layout")
     self.model = load_spec(visual_mesh_dir).compile()
     names = [self.model.joint(i).name for i in range(self.model.njnt)]
     if set(names) != set(self.index["joint_names"]) or self.model.nq != len(names):
@@ -55,12 +95,17 @@ class G1DReplayViewer:
     if visual_mesh_dir is None:
       self.scene.geom_groups_visible[3] = True
       self.scene._sync_visibilities()
+    # The target shows only the URR parts at the reference pose; the world model's
+    # prediction stays a whole robot. A zero alpha keeps a geom out of a ghost.
+    parts = urr_part_bodies(self.model)
     self.ghosts = []
-    for color in ((0.1, 0.85, 0.2, 0.6), (0.2, 0.45, 1.0, 0.6)):
+    for color, bodies in ((TARGET_RGBA, parts), (WM_RGBA, None)):
       model = copy.deepcopy(self.model)
       for gi in range(model.ngeom):
         model.geom_rgba[gi] = color
         if visual_mesh_dir is not None and model.geom_group[gi] != 2:
+          model.geom_rgba[gi, 3] = 0
+        if bodies is not None and model.geom_bodyid[gi] not in bodies:
           model.geom_rgba[gi, 3] = 0
       self.ghosts.append(model)
     self.grid = self.server.scene.add_grid(
@@ -75,7 +120,8 @@ class G1DReplayViewer:
     self.speed = 1.0
     self.auto_next = False
     self.end_on_failure = True
-    self.show_ref = self.show_wm = True
+    self.show_robot = self.show_target = True
+    self.show_wm = False
     self.dirty = True
     self.render_ms = 0.0
     self._build_gui()
@@ -102,13 +148,20 @@ class G1DReplayViewer:
       handle.on_click(lambda _: self.commands.put((command, value)))
       return handle
 
+    # Dyna's URR tracking toggles: the robot and the target, each on or off.
+    self.toggles = {}
+    for key, label in (("show_robot", "ROBOT"), ("show_target", "TARGET")):
+      handle = gui.add_button(label)
+      handle.on_click(lambda _, key=key: self.commands.put(("toggle", key)))
+      self.toggles[key] = (handle, label)
+    self.style_toggles()
     with gui.add_folder("Clips"):
       self.filter = gui.add_text("Filter", initial_value="")
       self.failed = gui.add_checkbox("Failed only (train rule)", initial_value=False)
       change(self.filter, "filter_text")
       change(self.failed, "failed_only")
       self.dropdown = gui.add_dropdown(
-        "Motion Clip", options=[e["name"] for e in self.entries]
+        "Motion Clip", options=[e["title"] for e in self.entries]
       )
       change(self.dropdown, "select")
       self.count = gui.add_markdown("")
@@ -145,31 +198,35 @@ class G1DReplayViewer:
       self.live_md = gui.add_markdown("")
     with gui.add_folder("Display"):
       change(
-        gui.add_checkbox("Reference ghost (green)", initial_value=True), "show_ref"
-      )
-      change(
-        gui.add_checkbox("World-model ghost (blue)", initial_value=True), "show_wm"
+        gui.add_checkbox("World-model ghost (blue)", initial_value=False), "show_wm"
       )
       change(gui.add_checkbox("Follow chassis", initial_value=True), "follow")
     with gui.add_folder("Recording"):
       size = sum(e["bytes"] for e in self.entries) / 2**20
       gui.add_markdown(
         f"**Offline · {1 / self.index['dt']:.0f} Hz** · {len(self.entries)} clips · {size:.1f} MiB on disk\n\n"
-        "Grey: simulator · green: reference · blue: closed-loop world model.\n\n"
+        "Grey: simulator (ROBOT) · purple: the reference's URR parts — chest, hands, "
+        "elbows and chassis (TARGET) · blue: closed-loop world model.\n\n"
         "Drag the frame slider to pause and inspect. Failures are recorded; changing the stop toggle does not rerun inference."
       )
       self.status = gui.add_markdown("")
     self.refilter()
+
+  def style_toggles(self):
+    for key, (handle, label) in self.toggles.items():
+      on = getattr(self, key)
+      handle.label = f"{'●' if on else '○'} [ {label} ]"
+      handle.color = "violet" if on else "gray"
 
   def refilter(self):
     needle = self.filter_text.strip().lower()
     self.filtered = [
       i
       for i, e in enumerate(self.entries)
-      if needle in e["name"].lower()
+      if needle in e["title"].lower()
       and (not self.failed_only or e["first_failure"] is not None)
     ]
-    options = [self.entries[i]["name"] for i in self.filtered]
+    options = [self.entries[i]["title"] for i in self.filtered]
     self.dropdown.disabled = not options
     self.dropdown.options = options or ["(no matches)"]
     self.count.content = f"{len(options)} of {len(self.entries)} clips"
@@ -177,12 +234,13 @@ class G1DReplayViewer:
       if self.selected not in self.filtered:
         self.commands.put(("select", options[0]))
       else:
-        self.dropdown.value = self.entries[self.selected]["name"]
+        self.dropdown.value = self.entries[self.selected]["title"]
 
   def select(self, index):
     entry = self.entries[index]
     # Only one decompressed clip is retained; the dataset is never loaded here.
-    self.arrays = load_clip(self.directory, entry, len(self.qorder))
+    source = entry["source"]
+    self.arrays = load_clip(self.directories[source], entry, len(self.qorder))
     self.selected = index
     self.cursor = ReplayCursor(entry["frames"], entry["first_failure"])
     self.cursor.end_on_failure = self.end_on_failure
@@ -190,8 +248,8 @@ class G1DReplayViewer:
     self.slider.max = max(1, self.cursor.end)
     self.slider.disabled = self.cursor.end == 0
     self.failure_button.disabled = self.cursor.failure is None
-    self.dropdown.value = entry["name"]
-    benchmark = self.index.get("benchmark", {}).get(entry["name"], {})
+    self.dropdown.value = entry["title"]
+    benchmark = self.recordings[source].get("benchmark", {}).get(entry["name"], {})
     failure = entry["first_failure"]
     note = (
       "none"
@@ -220,7 +278,7 @@ class G1DReplayViewer:
       changed = True
       if command == "select":
         index = next(
-          (i for i, e in enumerate(self.entries) if e["name"] == value), None
+          (i for i, e in enumerate(self.entries) if e["title"] == value), None
         )
         if index is not None and index in self.filtered:
           self.select(index)
@@ -244,7 +302,12 @@ class G1DReplayViewer:
           self.cursor.seek(frame)
       elif command == "follow":
         self.scene.camera_tracking_enabled = value
-      elif command in ("speed", "auto_next", "show_ref", "show_wm"):
+      elif command == "toggle":
+        setattr(self, value, not getattr(self, value))
+        self.style_toggles()
+        if value == "show_robot" and self.show_robot:
+          self.scene._sync_visibilities()
+      elif command in ("speed", "auto_next", "show_wm"):
         setattr(self, command, value)
       elif command == "end_on_failure":
         self.end_on_failure = self.cursor.end_on_failure = value
@@ -263,15 +326,19 @@ class G1DReplayViewer:
     mujoco.mj_kinematics(self.model, self.data)
     self.scene.clear()
     for i, show in enumerate(
-      (self.show_ref, self.show_wm and self.arrays["wm_valid"][frame])
+      (self.show_target, self.show_wm and self.arrays["wm_valid"][frame])
     ):
       if show:
         self.scene.add_ghost_entity(
           pose[i + 1],
           model=self.ghosts[i],
-          alpha=0.6,
-          label=("reference", "wm_prediction")[i],
+          alpha=(0.45, 0.6)[i],
+          label=("target", "wm_prediction")[i],
         )
+    if not self.show_robot:
+      # The robot's meshes stay hidden until ROBOT is on again (_sync_visibilities).
+      for group in self.scene._mesh_groups:
+        group.handle.visible = False
     # Keep the original renderer and all per-frame ghost updates. Atomic delivery
     # keeps the three poses together; no decimation or stale ghost frames.
     with self.server.atomic():
