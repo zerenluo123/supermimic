@@ -41,6 +41,7 @@ from supermimic.g1d.env_cfg import (
   failure_errors,
   state_soft_limits,
   torso_offset_xz,
+  world_tracking_reward,
   yaw_quat_from_angle,
 )
 from supermimic.g1d.robot import default_state_q
@@ -127,10 +128,13 @@ class G1DRepresentation(GenCoordRepresentation):
     self.urr_table = urr_table
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
     self.critic_extra_dim = 1 + ((NUM_GOAL_FRAMES + 1) * urr_width if critic_urr else 0)
+    # The env's reward rule (its motion command's ``world_reward``), set by bind.
+    self.world_reward = False
 
   def bind(self, env: ManagerBasedRlEnv, sim_context: SimContext) -> None:
     super().bind(env, sim_context)
     robot = env.scene["robot"]
+    self.world_reward = env.command_manager.get_term("motion").cfg.world_reward
     self._soft_joint_pos_limits = state_soft_limits(robot)
     jm = G1DJointMap(robot.joint_names)
     self._lift_cols, self._upper_cols = jm.lift, jm.upper
@@ -347,6 +351,18 @@ class G1DRepresentation(GenCoordRepresentation):
     target_body_lin_vel_w: torch.Tensor,
     target_body_ang_vel_w: torch.Tensor,
   ) -> torch.Tensor:
+    if self.world_reward:
+      return self.failure_error_and_reward(
+        next_rep_state,
+        next_aux_state,
+        next_joint_state,
+        action,
+        last_action,
+        target_body_pos_w,
+        target_body_quat_w,
+        target_body_lin_vel_w,
+        target_body_ang_vel_w,
+      )[1]
     return super().compute_wm_reward_from_reference(
       next_rep_state,
       next_aux_state,
@@ -389,6 +405,23 @@ class G1DRepresentation(GenCoordRepresentation):
     error = self._failure_error(
       next_aux_state, pos, quat, target_body_pos_w, target_body_quat_w
     )
+    if self.world_reward:
+      reward = world_tracking_reward(
+        pos,
+        matrix_from_quat(quat),
+        lin_vel,
+        ang_vel,
+        next_joint_state,
+        effective_action(action),
+        effective_action(last_action),
+        target_body_pos_w,
+        target_body_quat_w,
+        target_body_lin_vel_w,
+        target_body_ang_vel_w,
+        self._soft_joint_pos_limits,
+        self.dt,
+      )
+      return error, reward
     reward = tracking_reward(
       next_aux_state,
       pos,

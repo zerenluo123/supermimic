@@ -7,7 +7,8 @@ thresholds) and stops there. Normalized return = summed step reward / (0.1 *
 steps played), also over the whole clip (``return_full_clip``). Also reported:
 which rule ended each failed clip and the tracking precision over the steps
 played (column height error, chassis world xy distance, mean upper-body distance
-to the re-anchored reference, mean upper-joint error).
+to the re-anchored reference and to the reference itself in the world frame, mean
+wrist world distance, mean upper-joint error).
 """
 
 from __future__ import annotations
@@ -64,6 +65,8 @@ class ClipResult:
   col_err_mean: float = 0.0
   xy_err_mean: float = 0.0
   upper_err_mean: float = 0.0
+  upper_world_err_mean: float = 0.0
+  wrist_world_err_mean: float = 0.0
   joint_err_mean: float = 0.0
 
 
@@ -153,6 +156,7 @@ def run_benchmark(
     return torch.zeros(num_envs, device=device)
 
   ret, col, xy, up, joint = zeros(), zeros(), zeros(), zeros(), zeros()
+  up_world, wrist_world = zeros(), zeros()
   steps = torch.zeros(num_envs, dtype=torch.long, device=device)
   pooled_col: list[torch.Tensor] = []
   results: dict[int, ClipResult] = {}
@@ -175,6 +179,8 @@ def run_benchmark(
     col += terms["column_err"]
     xy += terms["failure"][:, 0]
     up += terms["upper_err"]
+    up_world += terms["upper_world_err"]
+    wrist_world += terms["wrist_world_err"]
     joint += terms["joint_err"]
     pooled_col.append(terms["column_err"][active])
     done = (terminated | truncated) & active
@@ -200,6 +206,8 @@ def run_benchmark(
         col_err_mean=float(col[e]) / st,
         xy_err_mean=float(xy[e]) / st,
         upper_err_mean=float(up[e]) / st,
+        upper_world_err_mean=float(up_world[e]) / st,
+        wrist_world_err_mean=float(wrist_world[e]) / st,
         joint_err_mean=float(joint[e]) / st,
       )
     reset = terminated | truncated
@@ -209,7 +217,7 @@ def run_benchmark(
       nxt[ids] += num_envs
       active = current < n_clips
       cmd.forced_frames[ids] = starts[nxt[ids].clamp(max=n_clips - 1)]
-      for t in (ret, col, xy, up, joint):
+      for t in (ret, col, xy, up, up_world, wrist_world, joint):
         t[ids] = 0.0
       steps[ids] = 0
     hist = torch.cat([hist[:, 1:], obs["actor"].unsqueeze(1)], dim=1)
@@ -241,6 +249,8 @@ def summarize(clips: list[ClipResult], pooled: dict) -> dict:
     },
     "xy_err_mean": weighted("xy_err_mean"),
     "upper_err_mean": weighted("upper_err_mean"),
+    "upper_world_err_mean": weighted("upper_world_err_mean"),
+    "wrist_world_err_mean": weighted("wrist_world_err_mean"),
     "joint_err_mean": weighted("joint_err_mean"),
     "failed_clips": [c.name for c in clips if c.failed],
     **pooled,

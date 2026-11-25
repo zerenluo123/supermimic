@@ -666,6 +666,10 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   reset-sampling bins, about as many as the whole library has: every rank's reset
   sampler then gets the samples per bin of an unsharded run instead of
   world-size times more."""
+  world_reward: bool = False
+  """Score every tracked body against its reference in the world frame, as ScaleBFM
+  does, instead of re-anchoring the bodies at the robot's chassis; the two chassis
+  terms go (``apply_reward_rule``). The world model's reward follows."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -822,6 +826,13 @@ TRACKING_TERMS = (
 )
 ACTION_RATE_WEIGHT = -0.1
 JOINT_LIMIT_WEIGHT = -2.0
+# ``world_reward``: the body terms alone, each body against its reference in the
+# world frame (ScaleBFM's rule); the chassis is a tracked body.
+WORLD_TRACKING_TERMS = TRACKING_TERMS[2:]
+# The wrist links, whose world-frame error the benchmark reports.
+WRIST_ROWS = [
+  C.TRACKED_BODIES.index(n) for n in ("left_wrist_yaw_link", "right_wrist_yaw_link")
+]
 
 
 def tracking_errors(
@@ -857,6 +868,70 @@ def tracking_errors(
   )
 
 
+def world_tracking_errors(
+  body_pos: torch.Tensor,
+  body_rot: torch.Tensor,
+  body_lin_vel: torch.Tensor,
+  body_ang_vel: torch.Tensor,
+  ref_pos: torch.Tensor,
+  ref_quat: torch.Tensor,
+  ref_lin_vel: torch.Tensor,
+  ref_ang_vel: torch.Tensor,
+) -> torch.Tensor:
+  """``(..., 4)`` squared errors of ``WORLD_TRACKING_TERMS``: every tracked body
+  against its reference in the world frame, nothing re-anchored."""
+  return torch.stack(
+    [
+      ((body_pos - ref_pos) ** 2).sum(-1).mean(-1),
+      (rotation_error_magnitude(body_rot, matrix_from_quat(ref_quat)) ** 2).mean(-1),
+      ((body_lin_vel - ref_lin_vel) ** 2).sum(-1).mean(-1),
+      ((body_ang_vel - ref_ang_vel) ** 2).sum(-1).mean(-1),
+    ],
+    dim=-1,
+  )
+
+
+def world_tracking_reward(
+  body_pos: torch.Tensor,
+  body_rot: torch.Tensor,
+  body_lin_vel: torch.Tensor,
+  body_ang_vel: torch.Tensor,
+  joint_state: torch.Tensor,
+  action: torch.Tensor,
+  last_action: torch.Tensor,
+  ref_pos: torch.Tensor,
+  ref_quat: torch.Tensor,
+  ref_lin_vel: torch.Tensor,
+  ref_ang_vel: torch.Tensor,
+  soft_joint_pos_limits: torch.Tensor,
+  dt: float,
+) -> torch.Tensor:
+  """The ``world_reward`` env's step reward, as its reward manager sums
+  ``_terms_from``: ``action`` and ``last_action`` are the effective ones and
+  ``joint_state`` is ``[qj, vj]``."""
+  err = world_tracking_errors(
+    body_pos,
+    body_rot,
+    body_lin_vel,
+    body_ang_vel,
+    ref_pos,
+    ref_quat,
+    ref_lin_vel,
+    ref_ang_vel,
+  )
+  reward = sum(
+    weight * torch.exp(-err[..., i] / std**2)
+    for i, (_, weight, std) in enumerate(WORLD_TRACKING_TERMS)
+  )
+  action_rate = ((action - last_action) ** 2).sum(-1)
+  joint_pos, _ = joint_state.chunk(2, dim=-1)
+  lo, hi = soft_joint_pos_limits.unbind(-1)
+  joint_limit = ((lo - joint_pos).clamp(min=0) + (joint_pos - hi).clamp(min=0)).sum(-1)
+  return dt * (
+    reward + ACTION_RATE_WEIGHT * action_rate + JOINT_LIMIT_WEIGHT * joint_limit
+  )
+
+
 def _step_terms(env: ManagerBasedRlEnv) -> dict[str, torch.Tensor]:
   """Reward kernels, penalties and failure errors on the post-step state, once per
   env step (the termination and reward managers both read them)."""
@@ -881,6 +956,7 @@ def _step_terms(env: ManagerBasedRlEnv) -> dict[str, torch.Tensor]:
     cmd.state_limits,
     cmd.joint_pos,
     offset,
+    cmd.cfg.world_reward,
   )
   env.__dict__["_g1d_step_terms"] = (key, terms)
   return terms
@@ -898,25 +974,21 @@ def _terms_from(
   state_limits: torch.Tensor,
   ref_joint_pos: torch.Tensor,
   offset: tuple[float, float],
+  world_reward: bool = False,
 ) -> dict[str, torch.Tensor]:
   """``_step_terms`` from the post-step state and the reference."""
   root_pos, root_quat, qj, lin, ang, vj = _split_state(state)
   pos, quat, lin_b, ang_b = fk(root_pos, root_quat, qj, lin, ang, vj)
-  err = tracking_errors(
-    root_pos,
-    root_quat,
-    pos,
-    matrix_from_quat(quat),
-    lin_b,
-    ang_b,
-    ref_pos,
-    ref_quat,
-    ref_lin_vel,
-    ref_ang_vel,
-  )
+  rot = matrix_from_quat(quat)
+  refs = (ref_pos, ref_quat, ref_lin_vel, ref_ang_vel)
+  if world_reward:
+    err = world_tracking_errors(pos, rot, lin_b, ang_b, *refs)
+    rule = WORLD_TRACKING_TERMS
+  else:
+    err = tracking_errors(root_pos, root_quat, pos, rot, lin_b, ang_b, *refs)
+    rule = TRACKING_TERMS
   terms = {
-    name: torch.exp(-err[:, i] / std**2)
-    for i, (name, _, std) in enumerate(TRACKING_TERMS)
+    name: torch.exp(-err[:, i] / std**2) for i, (name, _, std) in enumerate(rule)
   }
   action, prev = effective_action(action), effective_action(prev_action)
   terms["action_rate_l2"] = ((action - prev) ** 2).sum(-1)
@@ -927,6 +999,9 @@ def _terms_from(
   )
   tgt_pos = _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
   terms["upper_err"] = (tgt_pos[:, 1:] - pos[:, 1:]).norm(dim=-1).mean(-1)
+  world = (ref_pos - pos).norm(dim=-1)
+  terms["upper_world_err"] = world[:, 1:].mean(-1)
+  terms["wrist_world_err"] = world[:, WRIST_ROWS].mean(-1)
   terms["joint_err"] = (qj[:, 1:] - ref_joint_pos[:, 1:]).abs().mean(-1)
   terms["column_err"] = (qj[:, 0] - ref_joint_pos[:, 0]).abs()
   return terms
@@ -1069,3 +1144,14 @@ def g1d_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     motion.joint_position_range = (0.0, 0.0)
     motion.sampling_mode = "start"
   return cfg
+
+
+def apply_reward_rule(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Drop the two chassis terms under ``world_reward``: the chassis is a tracked
+  body, so the world-frame body terms already score where it is. Call once the
+  command cfg is final, before the env is built."""
+  motion = cfg.commands["motion"]
+  assert isinstance(motion, G1DMotionCommandCfg)
+  if motion.world_reward:
+    for name, _, _ in TRACKING_TERMS[:2]:
+      cfg.rewards.pop(name, None)

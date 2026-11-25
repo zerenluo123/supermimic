@@ -6,12 +6,24 @@ import mujoco
 import numpy as np
 import pytest
 import torch
+from mjlab.utils.lab_api.math import matrix_from_quat
 
 from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import (
+  ACTION_RATE_WEIGHT,
+  JOINT_LIMIT_WEIGHT,
+  TRACKING_TERMS,
+  WORLD_TRACKING_TERMS,
+  _terms_from,
+  apply_reward_rule,
+  effective_action,
   failure_errors,
+  g1d_env_cfg,
   heading_yaw,
   torso_offset_xz,
+  tracking_errors,
+  world_tracking_errors,
+  world_tracking_reward,
   yaw_link_height,
   yaw_quat_from_angle,
 )
@@ -129,6 +141,90 @@ def test_failure_errors_on_reference_are_zero():
   pos3, quat3, _, _ = fk(moved, root_quat, joints, zero, zero, joints)
   err = failure_errors(moved, pos3, quat3, root_quat, pos, quat, offset)
   torch.testing.assert_close(err, torch.tensor([[0.2, 0.0, 0.0]]), atol=1e-5, rtol=0)
+
+
+def test_world_reward_scores_the_chassis_offset():
+  """A chassis moved 20 cm with the body unchanged: the re-anchored body terms do
+  not see it, the world-frame ones see 20 cm on every body."""
+  fk = G1DForwardKinematics(load_model(), C.TRACKED_BODIES)
+  root_pos = torch.tensor([[1.0, 2.0, C.AGV_HEIGHT]])
+  root_quat = yaw_quat_from_angle(torch.tensor([0.7]))
+  joints = torch.zeros(1, C.NJ)
+  zero = torch.zeros(1, 3)
+  ref = fk(root_pos, root_quat, joints, zero, zero, joints)
+  moved = root_pos + torch.tensor([[0.2, 0.0, 0.0]])
+  pos, quat, lin, ang = fk(moved, root_quat, joints, zero, zero, joints)
+  rot = matrix_from_quat(quat)
+  relative = tracking_errors(moved, root_quat, pos, rot, lin, ang, *ref)
+  world = world_tracking_errors(pos, rot, lin, ang, *ref)
+  torch.testing.assert_close(relative[:, 2], torch.zeros(1), atol=1e-6, rtol=0)
+  torch.testing.assert_close(world[:, 0], torch.full((1,), 0.04), atol=1e-6, rtol=0)
+  torch.testing.assert_close(world[:, 1:], torch.zeros(1, 3), atol=1e-6, rtol=0)
+
+
+def test_world_reward_is_the_env_terms_summed():
+  """The world model's ``world_reward`` step reward is what the env's reward
+  manager sums from ``_terms_from``: the body terms, the penalties, times dt."""
+  model = load_model()
+  fk = G1DForwardKinematics(model, C.TRACKED_BODIES)
+  torch.manual_seed(0)
+  n, dt = 6, 0.02
+  root_pos = torch.cat([torch.randn(n, 2), torch.full((n, 1), C.AGV_HEIGHT)], -1)
+  root_quat = yaw_quat_from_angle(torch.randn(n))
+  qj, vj = 0.3 * torch.randn(n, C.NJ), torch.randn(n, C.NJ)
+  lin = torch.cat([torch.randn(n, 2), torch.zeros(n, 1)], -1)
+  ang = torch.cat([torch.zeros(n, 2), torch.randn(n, 1)], -1)
+  state = torch.cat([root_pos, root_quat, qj, lin, ang, vj], -1)
+  ref = fk(
+    root_pos + 0.1 * torch.randn(n, 3),
+    yaw_quat_from_angle(torch.randn(n)),
+    0.3 * torch.randn(n, C.NJ),
+    torch.randn(n, 3),
+    torch.randn(n, 3),
+    torch.randn(n, C.NJ),
+  )
+  action, prev = torch.randn(n, C.NUM_UPPER + 4), torch.randn(n, C.NUM_UPPER + 4)
+  limits = torch.stack([torch.full((C.NJ,), -0.2), torch.full((C.NJ,), 0.2)], -1)
+  args = (*ref, action, prev, limits, torch.zeros(n, C.NJ), torso_offset_xz(model))
+  terms = _terms_from(fk, state, *args, world_reward=True)
+  assert not {name for name, _, _ in TRACKING_TERMS[:2]} & set(terms)
+  summed = sum(weight * terms[name] for name, weight, _ in WORLD_TRACKING_TERMS)
+  env_reward = dt * (
+    summed
+    + ACTION_RATE_WEIGHT * terms["action_rate_l2"]
+    + JOINT_LIMIT_WEIGHT * terms["joint_limit"]
+  )
+  pos, quat, lin_w, ang_w = fk(root_pos, root_quat, qj, lin, ang, vj)
+  wm_reward = world_tracking_reward(
+    pos,
+    matrix_from_quat(quat),
+    lin_w,
+    ang_w,
+    torch.cat([qj, vj], -1),
+    effective_action(action),
+    effective_action(prev),
+    *ref,
+    limits,
+    dt,
+  )
+  torch.testing.assert_close(wm_reward, env_reward)
+  # The re-anchored rule keeps all six tracking terms; the failure errors and the
+  # benchmark's error terms do not depend on the rule.
+  relative = _terms_from(fk, state, *args)
+  assert {name for name, _, _ in TRACKING_TERMS} <= set(relative)
+  for key in ("failure", "upper_err", "upper_world_err", "wrist_world_err"):
+    torch.testing.assert_close(terms[key], relative[key])
+
+
+def test_world_reward_drops_the_chassis_terms():
+  cfg = g1d_env_cfg()
+  apply_reward_rule(cfg)
+  assert {name for name, _, _ in TRACKING_TERMS} <= set(cfg.rewards)
+  cfg.commands["motion"].world_reward = True
+  apply_reward_rule(cfg)
+  positive = {name for name, term in cfg.rewards.items() if term.weight > 0}
+  assert positive == {name for name, _, _ in WORLD_TRACKING_TERMS}
+  assert sum(cfg.rewards[name].weight for name in positive) == 4.0
 
 
 def test_stiff_chassis_gains_are_the_soft_ones_over_the_loop_time():

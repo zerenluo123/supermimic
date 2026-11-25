@@ -30,6 +30,8 @@ COLS = (
   "xy_err_mean_cm",
   "upper_err_mean_cm",
   "joint_err_mean",
+  "upper_world_err_mean_cm",
+  "wrist_world_err_mean_cm",
   "fail_rules",
   "failed",
 )
@@ -125,6 +127,8 @@ def main(
           f"{100 * s['xy_err_mean']:.2f}",
           f"{100 * s['upper_err_mean']:.2f}",
           f"{s['joint_err_mean']:.4f}",
+          f"{100 * s['upper_world_err_mean']:.2f}",
+          f"{100 * s['wrist_world_err_mean']:.2f}",
           " ".join(f"{k}:{v}" for k, v in s["fail_rule_counts"].items() if v),
           "|".join(s["failed_clips"]),
         ]
