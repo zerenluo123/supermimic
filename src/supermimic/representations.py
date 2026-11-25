@@ -434,11 +434,13 @@ class StateRepresentation(nn.Module, ABC):
     motion: MotionLoader,
     motion_times: torch.Tensor,
     aux_state: torch.Tensor,
+    rep_state: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     """Build ``(wm_goal, actor_goal)`` from the motion window at ``motion_times``.
 
     The single goal-build path shared by the WM env, the task goal extractor, and
-    the viewer so every site produces an identical layout.
+    the viewer so every site produces an identical layout. ``rep_state`` (the
+    robot's own state) is for subclasses whose goal is relative to its parts.
     """
     content = motion_goal_window(motion, motion_times)
     target_pos, target_quat = motion_anchor_window(motion, motion_times)

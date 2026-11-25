@@ -56,10 +56,14 @@ class BaseRunnerCfg:
   buffer_size: int = 1000
   representation: str = "gencoord"  # "gencoord" or "maxcoord"
   actor_obs: str = "rep_state"  # "rep_state" or "proprio"
-  g1d_actor_goal: Literal["joints", "urr"] = "joints"
-  """G1-D actor goal per window frame: the reference joints and their velocities, or
+  g1d_actor_goal: Literal["joints", "urr", "urr_robot", "urr_robot_rel"] = "joints"
+  """G1-D actor goal per window frame: the reference joints and their velocities;
   the reference URR keypoint pose (chest and hands, elbow positions) in that frame's
-  reference chassis frame. The critic keeps the joints."""
+  reference chassis frame; or ScaleBFM's per-body targets in the robot's own chassis
+  frame for the chassis and the keypoints, each with its orientation, as
+  ``[pos, rot]`` (``urr_robot``) or ``[pos, pos_rel, rot, rot_rel]``
+  (``urr_robot_rel``; both need ``g1d_chassis_window``). The critic keeps the
+  joints."""
   g1d_critic_urr: bool = False
   """G1-D: also give the critic the window's URR keypoint poses and twists and the
   robot's own keypoints."""
@@ -597,7 +601,7 @@ class SuperMimicRunner(BaseRunner[SuperMimicRunnerCfg]):
       noisy=proprio,
     )
     goals = {
-      ts.name: ts.extract_training_goal(self.motion, motion_times, aux_state)
+      ts.name: ts.extract_training_goal(self.motion, motion_times, aux_state, rep_state)
       for ts in self._active_task_specs
     }
     return build_actor_obs_td(goals, self._collection_history(sensor))

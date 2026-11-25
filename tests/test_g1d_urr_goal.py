@@ -8,7 +8,7 @@ import mujoco
 import numpy as np
 import pytest
 import torch
-from mjlab.utils.lab_api.math import quat_apply_inverse
+from mjlab.utils.lab_api.math import quat_apply, quat_apply_inverse, quat_inv, quat_mul
 
 from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import HalfTable, yaw_quat_from_angle
@@ -28,6 +28,7 @@ from supermimic.representations import (
   extract_actor_goal,
   goal_window_indices,
 )
+from supermimic.utils.helpers import quat_to_rot6d
 
 PALMS = ("left_hand_palm_link", "right_hand_palm_link")
 
@@ -374,3 +375,127 @@ def test_goal_and_critic_without_the_table_are_unchanged(half):
     assert hasattr(motion, "_urr_table") == urr_table
   for with_table, without in zip(out[True], out[False], strict=True):
     torch.testing.assert_close(without, with_table, atol=1e-6, rtol=0)
+
+
+def _robot_state(motion, times):
+  """``(aux, rep_state)`` of a robot 10 cm and 0.1 rad off the reference chassis,
+  its column 5 cm up and its arms elsewhere."""
+  g = torch.Generator().manual_seed(1)
+  joints = motion.joint_pos[times] + torch.tensor([0.05] + [0.0] * 16)
+  joints[:, 1:] = joints[:, 1:] + 0.3 * torch.rand(len(times), 16, generator=g) - 0.15
+  rep_state = torch.cat(
+    [torch.zeros(len(times), 10), joints, torch.zeros(len(times), C.NJ)], -1
+  )
+  return _robot_aux(motion, times), rep_state
+
+
+def _world_parts(fk, root_pos, root_quat, joints):
+  """World ``(pos, quat)`` of the chassis and the keypoints (with their offsets)."""
+  zero = torch.zeros_like(root_pos)
+  pos, quat, _, _ = fk(
+    root_pos, root_quat, joints, zero, zero, torch.zeros_like(joints)
+  )
+  rows = [C.TRACKED_BODIES.index(name) for name in C.URR_BODIES]
+  pos, quat = pos[..., rows, :], quat[..., rows, :]
+  pos = pos + quat_apply(quat, torch.tensor(C.URR_OFFSETS).expand_as(pos))
+  return (
+    torch.cat([root_pos.unsqueeze(-2), pos], -2),
+    torch.cat([root_quat.unsqueeze(-2), quat], -2),
+  )
+
+
+def test_robot_frame_goal_is_scalebfm_targets():
+  """ScaleBFM's four target terms, from world poses: with the robot root ``(p, R)``,
+  a reference part ``(P, Q)`` and the robot's own ``(p_b, q_b)``: ``R^-1 (P - p)``,
+  ``R^-1 (P - p_b)``, ``R^-1 Q``, ``R^-1 Q q_b^-1 R``."""
+  motion = _motion()
+  times = torch.tensor([0, 25, 29, 30, 64, 99])
+  aux, rep_state = _robot_state(motion, times)
+  rep = _rep(actor_goal="urr_robot_rel", chassis_window=True)
+  wm_goal, goal = rep.compute_wm_goal(motion, times, aux, rep_state)
+  torch.testing.assert_close(wm_goal, _rep().compute_wm_goal(motion, times, aux)[0])
+  assert goal.shape[-1] == rep.actor_goal_dim(433) == NUM_GOAL_FRAMES * 6 * 18 == 1080
+  goal = goal.view(len(times), NUM_GOAL_FRAMES, 6, 18)
+
+  idx = goal_window_indices(motion, times)
+  ref_pos, ref_quat = _world_parts(
+    motion.fk, motion.root_pos_w[idx], motion.root_quat_w[idx], motion.joint_pos[idx]
+  )
+  p, q = aux[:, None, None, :3], aux[:, None, None, 3:7]
+  own_pos, own_quat = _world_parts(
+    motion.fk, aux[:, :3], aux[:, 3:7], rep_state[:, 10:27]
+  )
+  own_pos, own_quat = own_pos[:, None], own_quat[:, None]
+  q = q.expand_as(ref_quat)
+  pos = quat_apply_inverse(q, ref_pos - p)
+  pos_rel = quat_apply_inverse(q, ref_pos - own_pos)
+  rot = quat_mul(quat_inv(q), ref_quat)
+  rot_rel = quat_mul(
+    quat_mul(quat_mul(quat_inv(q), ref_quat), quat_inv(own_quat.expand_as(q))), q
+  )
+  atol = dict(atol=1e-5, rtol=0)
+  torch.testing.assert_close(goal[..., 0:3], pos, **atol)
+  torch.testing.assert_close(goal[..., 3:6], pos_rel, **atol)
+  torch.testing.assert_close(goal[..., 6:12], quat_to_rot6d(rot), **atol)
+  torch.testing.assert_close(goal[..., 12:18], quat_to_rot6d(rot_rel), **atol)
+  # The chassis is the robot's own origin, so its relative terms repeat its targets
+  # (ScaleBFM's anchor too), and its first frame is the chassis window's.
+  torch.testing.assert_close(goal[:, :, 0, 3:6], goal[:, :, 0, 0:3], **atol)
+  torch.testing.assert_close(goal[:, :, 0, 12:18], goal[:, :, 0, 6:12], **atol)
+  window = _rep(actor_goal="urr", chassis_window=True).compute_wm_goal(
+    motion, times, aux
+  )[1]
+  content = NUM_GOAL_FRAMES * C.URR_POSE_DIM
+  torch.testing.assert_close(
+    goal[:, :, 0, 0:3].reshape(len(times), -1),
+    window[:, content : content + 3 * NUM_GOAL_FRAMES],
+    **atol,
+  )
+
+  # "urr_robot" keeps [pos, rot] of the same parts.
+  rep = _rep(actor_goal="urr_robot", chassis_window=True)
+  short = rep.compute_wm_goal(motion, times, aux, rep_state)[1]
+  assert short.shape[-1] == rep.actor_goal_dim(433) == NUM_GOAL_FRAMES * 6 * 9 == 540
+  short = short.view(len(times), NUM_GOAL_FRAMES, 6, 9)
+  torch.testing.assert_close(short[..., :3], goal[..., 0:3])
+  torch.testing.assert_close(short[..., 3:], goal[..., 6:12])
+
+
+def test_robot_frame_goal_odometry_noise_moves_targets_not_the_robot():
+  motion = _motion()
+  times = torch.tensor([0, 25, 29, 30, 64, 99])
+  aux, rep_state = _robot_state(motion, times)
+  rep = _rep(actor_goal="urr_robot_rel", chassis_window=True)
+  clean = rep.compute_wm_goal(motion, times, aux, rep_state)[1]
+  rep.actor_goal_noise = True
+  torch.manual_seed(0)
+  noisy = rep.compute_wm_goal(motion, times, aux, rep_state)[1]
+  clean, noisy = (g.view(len(times), NUM_GOAL_FRAMES, 6, 18) for g in (clean, noisy))
+  assert (noisy - clean).abs().amax() > 1e-3
+  # pos - pos_rel is the robot's own part, which odometry does not move.
+  torch.testing.assert_close(
+    noisy[..., 0:3] - noisy[..., 3:6],
+    clean[..., 0:3] - clean[..., 3:6],
+    atol=1e-5,
+    rtol=0,
+  )
+  # All targets move rigidly together: their spacing and heights stay.
+  pos = [g[..., 0:3].reshape(len(times), -1, 3) for g in (clean, noisy)]
+  exact = "donot_use_mm_for_euclid_dist"
+  torch.testing.assert_close(
+    torch.cdist(pos[0], pos[0], compute_mode=exact),
+    torch.cdist(pos[1], pos[1], compute_mode=exact),
+    atol=1e-5,
+    rtol=0,
+  )
+  torch.testing.assert_close(pos[1][..., 2], pos[0][..., 2], atol=1e-5, rtol=0)
+
+
+def test_robot_frame_goal_needs_chassis_window_and_the_robot():
+  with pytest.raises(ValueError, match="chassis_window"):
+    G1DRepresentation("cpu", actor_goal="urr_robot")
+  motion = _motion()
+  times = torch.tensor([0, 64])
+  rep = _rep(actor_goal="urr_robot", chassis_window=True)
+  with pytest.raises(ValueError, match="rep_state"):
+    rep.compute_wm_goal(motion, times, _robot_aux(motion, times))

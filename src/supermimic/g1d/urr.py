@@ -53,6 +53,20 @@ def urr_features(
   return pose, twist
 
 
+def urr_body_frames(fk, joint_pos: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+  """``(pos (..., 5, 3), quat (..., 5, 4))`` of the keypoints in the chassis frame
+  from the state joints: each ``URR_BODIES`` body's frame moved to its keypoint by
+  ``URR_OFFSETS``, so the elbows carry their link's orientation too."""
+  rows = [fk.body_names.index(name) for name in C.URR_BODIES]
+  batch = joint_pos.shape[:-1]
+  root_pos = joint_pos.new_zeros(*batch, 3)
+  root_quat = joint_pos.new_tensor([1.0, 0.0, 0.0, 0.0]).expand(*batch, 4)
+  zero = joint_pos.new_zeros(*batch, 3)
+  bodies = fk(root_pos, root_quat, joint_pos, zero, zero, torch.zeros_like(joint_pos))
+  pos, quat = bodies[0][..., rows, :], bodies[1][..., rows, :]
+  return pos + quat_apply(quat, pos.new_tensor(C.URR_OFFSETS).expand_as(pos)), quat
+
+
 def motion_urr_rows(motion, idx: torch.Tensor, with_twist: bool) -> torch.Tensor:
   """``motion_urr_table(motion, with_twist)[idx]`` computed from the reference at
   ``idx`` on use, rounded to half precision as the table would store it."""

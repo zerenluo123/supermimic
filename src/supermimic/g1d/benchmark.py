@@ -164,7 +164,9 @@ def run_benchmark(
   hist = obs["actor"].unsqueeze(1).repeat(1, history_length, 1)
   while len(results) < n_clips:
     aux = obs["full_state"][:, :7]
-    _, goal = rep.compute_wm_goal(motion, cmd.time_steps, aux)
+    _, goal = rep.compute_wm_goal(
+      motion, cmd.time_steps, aux, rep.represent(obs["full_state"])
+    )
     action = actor(build_actor_obs_td({"motion": goal}, hist))
     obs, reward, terminated, truncated, _ = env.step(action)
     terms = env.__dict__["_g1d_step_terms"][1]

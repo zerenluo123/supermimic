@@ -25,7 +25,13 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import torch
-from mjlab.utils.lab_api.math import matrix_from_quat, quat_apply, quat_mul
+from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
+  quat_apply,
+  quat_inv,
+  quat_mul,
+  subtract_frame_transforms,
+)
 
 from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import (
@@ -38,7 +44,12 @@ from supermimic.g1d.env_cfg import (
   yaw_quat_from_angle,
 )
 from supermimic.g1d.robot import default_state_q
-from supermimic.g1d.urr import motion_urr_rows, motion_urr_table, urr_features
+from supermimic.g1d.urr import (
+  motion_urr_rows,
+  motion_urr_table,
+  urr_body_frames,
+  urr_features,
+)
 from supermimic.representations import (
   GOAL_REL_ORI_DIM,
   GOAL_REL_POS_DIM,
@@ -52,6 +63,7 @@ from supermimic.representations import (
   motion_goal_window,
 )
 from supermimic.utils.gencoord_helpers import decompose_rep_state
+from supermimic.utils.helpers import quat_to_rot6d
 from supermimic.utils.tracking_reward import tracking_reward
 
 if TYPE_CHECKING:
@@ -59,6 +71,15 @@ if TYPE_CHECKING:
   from mjlab.tasks.tracking.mdp.commands import MotionLoader
 
   from supermimic.sim_context import SimContext
+
+
+ACTOR_GOALS = ("joints", "urr", "urr_robot", "urr_robot_rel")
+ROBOT_FRAME_GOALS = ("urr_robot", "urr_robot_rel")
+"""Actor goals of ScaleBFM's form, every part in the robot's own chassis frame."""
+ROBOT_FRAME_PARTS = 1 + len(C.URR_BODIES)  # the chassis, then the URR keypoints
+ROBOT_FRAME_DIM = {"urr_robot": 3 + 6, "urr_robot_rel": 2 * (3 + 6)}
+"""Per part and window frame: ``[pos, rot6d]``, with ``"urr_robot_rel"`` then
+``[pos, pos_rel, rot6d, rot_rel6d]``."""
 
 
 class G1DRepresentation(GenCoordRepresentation):
@@ -83,16 +104,22 @@ class G1DRepresentation(GenCoordRepresentation):
     urr_table: bool = True,
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
-    (``"joints"``) or the reference URR keypoint pose in that frame's reference
-    chassis frame (``"urr"``). ``critic_urr`` also gives the critic the window's
+    (``"joints"``), the reference URR keypoint pose in that frame's reference
+    chassis frame (``"urr"``), or ScaleBFM's per-body targets in the robot's own
+    chassis frame (``"urr_robot"``: each part's position and orientation;
+    ``"urr_robot_rel"``: also its offset and turn from the robot's own part; see
+    ``_robot_frame_goal``), which need ``chassis_window`` for their odometry
+    noise. ``critic_urr`` also gives the critic the window's
     keypoint poses and twists and the robot's own. ``chassis_window`` gives the
     actor every window frame's reference chassis position (not only the current
     one's) with its heading. ``urr_table``: tabulate the motion's keypoints once;
     without it they are computed from the reference on each use (no table, the
     same values)."""
     super().__init__(C.NJ, torch.tensor(default_state_q(), device=device))
-    if actor_goal not in ("joints", "urr"):
-      raise ValueError(f"actor_goal is 'joints' or 'urr', not {actor_goal!r}")
+    if actor_goal not in ACTOR_GOALS:
+      raise ValueError(f"actor_goal is one of {ACTOR_GOALS}, not {actor_goal!r}")
+    if actor_goal in ROBOT_FRAME_GOALS and not chassis_window:
+      raise ValueError(f"actor_goal {actor_goal!r} needs chassis_window")
     self._encoder_bias: tuple[slice, SimContext] | None = None
     self.actor_goal = actor_goal
     self.critic_urr = critic_urr
@@ -179,6 +206,8 @@ class G1DRepresentation(GenCoordRepresentation):
 
   def actor_goal_dim(self, num_goals: int) -> int:
     rel = GOAL_REL_POS_DIM + GOAL_REL_ORI_DIM
+    if self.actor_goal in ROBOT_FRAME_GOALS:
+      return NUM_GOAL_FRAMES * ROBOT_FRAME_PARTS * ROBOT_FRAME_DIM[self.actor_goal]
     if self.actor_goal == "joints":
       content = num_goals - 3 - rel  # wm_goal = [joints, anchor_pos, rel_pos, rel_ori]
     else:
@@ -190,6 +219,7 @@ class G1DRepresentation(GenCoordRepresentation):
     motion: MotionLoader,
     motion_times: torch.Tensor,
     aux_state: torch.Tensor,
+    rep_state: torch.Tensor | None = None,
   ) -> tuple[torch.Tensor, torch.Tensor]:
     """GenCoord's goal with the reference chassis position at ``motion_times`` in
     the robot root frame appended to the content (the goal group's
@@ -198,7 +228,8 @@ class G1DRepresentation(GenCoordRepresentation):
     in place of the joints; ``wm_goal`` keeps the joints. With ``chassis_window``
     the actor's chassis part is the whole window's ``[rel_pos, rel_ori]`` from a
     noised robot pose in place of ``[anchor_pos, rel_ori]``, and ``wm_goal`` keeps
-    a clean ``anchor_pos``."""
+    a clean ``anchor_pos``. The robot-frame goals (``ROBOT_FRAME_GOALS``) are the
+    whole actor goal and read the robot's own joints from ``rep_state``."""
     window = motion_goal_window(motion, motion_times)
     target_pos, target_quat = motion_anchor_window(motion, motion_times)
     root_pos, root_quat = aux_state[..., :3], aux_state[..., 3:7]
@@ -222,6 +253,12 @@ class G1DRepresentation(GenCoordRepresentation):
         )
       chassis = torch.cat([anchor_pos, rel_part[..., GOAL_REL_POS_DIM:]], dim=-1)
     wm_goal = torch.cat([window, anchor_pos, rel_part], dim=-1)
+    if self.actor_goal in ROBOT_FRAME_GOALS:
+      if rep_state is None:
+        raise ValueError(f"actor_goal {self.actor_goal!r} needs the robot's rep_state")
+      return wm_goal, self._robot_frame_goal(
+        motion, motion_times, root_pos, root_quat, target_pos, target_quat, rep_state
+      )
     content = window
     if self.actor_goal == "urr":
       idx = goal_window_indices(motion, motion_times)
@@ -229,6 +266,70 @@ class G1DRepresentation(GenCoordRepresentation):
       content = urr.reshape(idx.shape[0], -1)
     actor_goal = torch.cat([content, chassis], dim=-1)
     return wm_goal, actor_goal
+
+  def _robot_frame_goal(
+    self,
+    motion: MotionLoader,
+    motion_times: torch.Tensor,
+    root_pos: torch.Tensor,
+    root_quat: torch.Tensor,
+    target_pos: torch.Tensor,
+    target_quat: torch.Tensor,
+    rep_state: torch.Tensor,
+  ) -> torch.Tensor:
+    """ScaleBFM's per-body targets (its ``target_body_pos``, ``_pos_rel``, ``_rot``,
+    ``_rot_rel``) over the goal window, every one in the robot's own (odometry
+    noised) chassis frame. The parts are the chassis and the URR keypoints, each
+    with its orientation (the elbows' is their link's). Per window frame and part:
+
+      pos       the reference part's position
+      pos_rel   pos minus the robot's own part's position
+      rot       rot6d of the reference part's orientation
+      rot_rel   rot6d of that orientation times the inverse of the robot's own
+
+    (``"urr_robot"`` keeps ``[pos, rot]``). The robot's own chassis sits at the
+    origin, so the chassis' ``pos_rel`` and ``rot_rel`` repeat its ``pos`` and
+    ``rot``, as ScaleBFM's anchor's do."""
+    idx = goal_window_indices(motion, motion_times)
+    ref_pos, ref_quat = urr_body_frames(
+      motion.fk, motion.joint_pos[idx]
+    )  # (E, F, 5, ·)
+    frames = target_pos.shape[1]
+    base_pos, base_quat = subtract_frame_transforms(
+      root_pos[:, None].expand(-1, frames, -1),
+      root_quat[:, None].expand(-1, frames, -1),
+      target_pos,
+      target_quat,
+    )  # each frame's reference chassis in the robot's frame, (E, F, 3 / 4)
+    pos = torch.cat(
+      [
+        base_pos.unsqueeze(-2),
+        base_pos.unsqueeze(-2)
+        + quat_apply(base_quat.unsqueeze(-2).expand_as(ref_quat), ref_pos),
+      ],
+      dim=-2,
+    )
+    quat = torch.cat(
+      [
+        base_quat.unsqueeze(-2),
+        quat_mul(base_quat.unsqueeze(-2).expand_as(ref_quat), ref_quat),
+      ],
+      dim=-2,
+    )  # (E, F, ROBOT_FRAME_PARTS, ·)
+    rot = quat_to_rot6d(quat)
+    if self.actor_goal == "urr_robot":
+      parts = torch.cat([pos, rot], dim=-1)
+    else:
+      qj = decompose_rep_state(rep_state)[4]
+      own_pos, own_quat = urr_body_frames(motion.fk, qj)  # (E, 5, ·)
+      unit = own_quat.new_tensor([1.0, 0.0, 0.0, 0.0]).expand(qj.shape[0], 1, 4)
+      own_pos = torch.cat([own_pos.new_zeros(qj.shape[0], 1, 3), own_pos], dim=-2)
+      own_quat = torch.cat([unit, own_quat], dim=-2).unsqueeze(1).expand_as(quat)
+      turn = quat_mul(quat, quat_inv(own_quat))
+      parts = torch.cat(
+        [pos, pos - own_pos.unsqueeze(1), rot, quat_to_rot6d(turn)], dim=-1
+      )
+    return parts.reshape(parts.shape[0], -1)
 
   # ------------------------------------------------------------------
   # Reward, termination, loss

@@ -263,9 +263,12 @@ def main(
       while (active >= 0).any():
         sensor = obs["actor"]
         _, goal = rep.compute_wm_goal(
-          motion, cmd.time_steps, rep.extract_aux_state(obs["full_state"])
+          motion,
+          cmd.time_steps,
+          rep.extract_aux_state(obs["full_state"]),
+          rep.represent(obs["full_state"]),
         )
-        _, wm_actor_goal = rep.compute_wm_goal(motion, cmd.time_steps, aux)
+        _, wm_actor_goal = rep.compute_wm_goal(motion, cmd.time_steps, aux, state)
 
         wm_sensor = rep.compute_actor_sensor(
           state,

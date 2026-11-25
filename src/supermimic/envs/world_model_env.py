@@ -261,7 +261,7 @@ class WorldModelEnv(ABC):
     """Compute the reference body state at ``motion_times`` and rebuild goals."""
     self._ref_body_state = self.motion.body_state(self.motion_times)
     self._wm_goal_obs, self._actor_goal_obs = self.representation.compute_wm_goal(
-      self.motion, self.motion_times, self.aux_state
+      self.motion, self.motion_times, self.aux_state, self.rep_state
     )
     self._build_task_goals()
 

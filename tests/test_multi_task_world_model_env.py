@@ -35,12 +35,12 @@ def _specs():
     TaskSpec(
       name="motion",
       goal_dim=MOTION_GOAL_DIM,
-      extract_training_goal=lambda m, mt, aux: motion_goal,
+      extract_training_goal=lambda m, mt, aux, rep=None: motion_goal,
     ),
     TaskSpec(
       name="velocity",
       goal_dim=VELOCITY_GOAL_DIM,
-      extract_training_goal=lambda m, mt, aux: velocity_goal,
+      extract_training_goal=lambda m, mt, aux, rep=None: velocity_goal,
     ),
   ]
 
@@ -198,6 +198,7 @@ class TestRepresentationApiContract:
       device="cpu",
     )
     env.aux_state = identity_aux(BATCH)
+    env.rep_state = None
     env.motion_times = torch.zeros(BATCH, dtype=torch.long)
     env._update_goal()
     assert torch.isfinite(env._wm_goal_obs).all()

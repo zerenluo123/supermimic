@@ -46,7 +46,9 @@ class DiscreteGoalSpec:
 type GoalSpec = ContinuousGoalSpec | DiscreteGoalSpec
 
 
-ExtractFromMotion = Callable[["MotionLoader", torch.Tensor, torch.Tensor], torch.Tensor]
+ExtractFromMotion = Callable[..., torch.Tensor]
+"""``(motion, motion_times, aux_state, rep_state=None) -> goal``; ``rep_state`` is the
+robot's own state, for goals given relative to its parts."""
 BuildInferenceGoalObs = Callable[[torch.Tensor], torch.Tensor]
 PrecomputeReplayGoal = Callable[["MotionLoader"], torch.Tensor]
 
@@ -83,8 +85,10 @@ def build_actor_obs_td(
 def make_motion_task(representation: "StateRepresentation", num_goals: int) -> TaskSpec:
   """Motion-tracking task: goal is the full motion target (actor side)."""
 
-  def extract(motion, motion_times, aux_state):
-    _, actor_goal = representation.compute_wm_goal(motion, motion_times, aux_state)
+  def extract(motion, motion_times, aux_state, rep_state=None):
+    _, actor_goal = representation.compute_wm_goal(
+      motion, motion_times, aux_state, rep_state
+    )
     return actor_goal
 
   return TaskSpec(
@@ -145,7 +149,7 @@ def make_velocity_task(
     w_b = quat_apply_inverse(quat, _centered_mean(motion.root_ang_vel_w, times))
     return torch.stack([v_b[:, 0], v_b[:, 1], w_b[:, 2]], dim=-1)
 
-  def extract(motion, motion_times, aux_state):
+  def extract(motion, motion_times, aux_state, rep_state=None):
     cmd = _body_frame_cmd(motion, motion_times, aux_state[:, 3:7])
     noise = (torch.rand_like(cmd) * 2 - 1) * noise_half.to(cmd.device)
     return _clamp(cmd + noise)
