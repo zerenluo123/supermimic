@@ -21,6 +21,14 @@ from supermimic.utils.helpers import quat_to_rot6d
 
 _TABLE_CHUNK = 1 << 16
 
+Offsets = tuple[tuple[float, float, float], ...]
+
+
+def urr_offsets(body_point: str = "chest") -> Offsets:
+  """``URR_OFFSETS`` with the body keypoint at ``body_point`` (``URR_BODY_OFFSETS``:
+  ``chest`` or ``waist``)."""
+  return (C.URR_BODY_OFFSETS[body_point], *C.URR_OFFSETS[1:])
+
 
 def urr_features(
   fk,
@@ -28,17 +36,18 @@ def urr_features(
   joint_vel: torch.Tensor,
   root_lin_vel_b: torch.Tensor,
   root_ang_vel_b: torch.Tensor,
+  offsets: Offsets = C.URR_OFFSETS,
 ) -> tuple[torch.Tensor, torch.Tensor]:
   """``(pose (..., 33), twist (..., 24))`` of the keypoints from the state joints and
   the chassis twist in its own frame; ``fk`` is a ``G1DForwardKinematics`` whose
-  bodies include ``URR_BODIES``."""
+  bodies include ``URR_BODIES``, ``offsets`` each keypoint's in its body's frame."""
   rows = [fk.body_names.index(name) for name in C.URR_BODIES]
   batch = joint_pos.shape[:-1]
   root_pos = joint_pos.new_zeros(*batch, 3)
   root_quat = joint_pos.new_tensor([1.0, 0.0, 0.0, 0.0]).expand(*batch, 4)
   bodies = fk(root_pos, root_quat, joint_pos, root_lin_vel_b, root_ang_vel_b, joint_vel)
   pos, quat, lin, ang = (b[..., rows, :] for b in bodies)
-  offset = quat_apply(quat, pos.new_tensor(C.URR_OFFSETS).expand_as(pos))
+  offset = quat_apply(quat, pos.new_tensor(offsets).expand_as(pos))
   oriented = slice(0, C.URR_NUM_ORIENTED)
   pose = torch.cat(
     [(pos + offset).flatten(-2), quat_to_rot6d(quat[..., oriented, :]).flatten(-2)], -1
@@ -53,10 +62,12 @@ def urr_features(
   return pose, twist
 
 
-def urr_body_frames(fk, joint_pos: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+def urr_body_frames(
+  fk, joint_pos: torch.Tensor, offsets: Offsets = C.URR_OFFSETS
+) -> tuple[torch.Tensor, torch.Tensor]:
   """``(pos (..., 5, 3), quat (..., 5, 4))`` of the keypoints in the chassis frame
   from the state joints: each ``URR_BODIES`` body's frame moved to its keypoint by
-  ``URR_OFFSETS``, so the elbows carry their link's orientation too."""
+  ``offsets``, so the elbows carry their link's orientation too."""
   rows = [fk.body_names.index(name) for name in C.URR_BODIES]
   batch = joint_pos.shape[:-1]
   root_pos = joint_pos.new_zeros(*batch, 3)
@@ -64,12 +75,15 @@ def urr_body_frames(fk, joint_pos: torch.Tensor) -> tuple[torch.Tensor, torch.Te
   zero = joint_pos.new_zeros(*batch, 3)
   bodies = fk(root_pos, root_quat, joint_pos, zero, zero, torch.zeros_like(joint_pos))
   pos, quat = bodies[0][..., rows, :], bodies[1][..., rows, :]
-  return pos + quat_apply(quat, pos.new_tensor(C.URR_OFFSETS).expand_as(pos)), quat
+  return pos + quat_apply(quat, pos.new_tensor(offsets).expand_as(pos)), quat
 
 
-def motion_urr_rows(motion, idx: torch.Tensor, with_twist: bool) -> torch.Tensor:
-  """``motion_urr_table(motion, with_twist)[idx]`` computed from the reference at
-  ``idx`` on use, rounded to half precision as the table would store it."""
+def motion_urr_rows(
+  motion, idx: torch.Tensor, with_twist: bool, offsets: Offsets = C.URR_OFFSETS
+) -> torch.Tensor:
+  """``motion_urr_table(motion, with_twist, offsets)[idx]`` computed from the
+  reference at ``idx`` on use, rounded to half precision as the table would store
+  it."""
   root_quat = motion.root_quat_w[idx]
   pose, twist = urr_features(
     motion.fk,
@@ -77,6 +91,7 @@ def motion_urr_rows(motion, idx: torch.Tensor, with_twist: bool) -> torch.Tensor
     motion.joint_vel[idx],
     quat_apply_inverse(root_quat, motion.root_lin_vel_w[idx]),
     quat_apply_inverse(root_quat, motion.root_ang_vel_w[idx]),
+    offsets,
   )
   rows = torch.cat([pose, twist], -1) if with_twist else pose
   if isinstance(motion.joint_pos, HalfTable):
@@ -93,13 +108,17 @@ def round_to_half(x: torch.Tensor) -> torch.Tensor:
 
 
 @torch.no_grad()
-def motion_urr_table(motion, with_twist: bool):
+def motion_urr_table(motion, with_twist: bool, offsets: Offsets = C.URR_OFFSETS):
   """Per-frame reference keypoints ``[pose, twist]`` (57 wide; 33 without
   ``with_twist``) in that frame's reference chassis frame, tabulated on the motion
   at its first use and kept there; half precision when its joints are."""
   width = C.URR_POSE_DIM + (C.URR_VEL_DIM if with_twist else 0)
   table = getattr(motion, "_urr_table", None)
-  if table is not None and table.shape[1] >= width:
+  if (
+    table is not None
+    and table.shape[1] >= width
+    and getattr(motion, "_urr_offsets", None) == offsets
+  ):
     return table
   out = torch.empty(
     motion.time_step_total, width, device=motion.joint_pos.device, dtype=torch.float32
@@ -113,9 +132,10 @@ def motion_urr_table(motion, with_twist: bool):
       motion.joint_vel[rows],
       quat_apply_inverse(root_quat, motion.root_lin_vel_w[rows]),
       quat_apply_inverse(root_quat, motion.root_ang_vel_w[rows]),
+      offsets,
     )
     out[rows] = torch.cat([pose, twist], -1)[:, :width]
   if isinstance(motion.joint_pos, HalfTable):
     out = HalfTable(out, str(out.device))
-  motion._urr_table = out
+  motion._urr_table, motion._urr_offsets = out, offsets
   return out

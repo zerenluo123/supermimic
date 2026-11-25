@@ -19,7 +19,9 @@ from supermimic.g1d.urr import (
   motion_urr_rows,
   motion_urr_table,
   round_to_half,
+  urr_body_frames,
   urr_features,
+  urr_offsets,
 )
 from supermimic.representations import (
   GOAL_REL_ORI_DIM,
@@ -389,7 +391,7 @@ def _robot_state(motion, times):
   return _robot_aux(motion, times), rep_state
 
 
-def _world_parts(fk, root_pos, root_quat, joints):
+def _world_parts(fk, root_pos, root_quat, joints, offsets=C.URR_OFFSETS):
   """World ``(pos, quat)`` of the chassis and the keypoints (with their offsets)."""
   zero = torch.zeros_like(root_pos)
   pos, quat, _, _ = fk(
@@ -397,21 +399,23 @@ def _world_parts(fk, root_pos, root_quat, joints):
   )
   rows = [C.TRACKED_BODIES.index(name) for name in C.URR_BODIES]
   pos, quat = pos[..., rows, :], quat[..., rows, :]
-  pos = pos + quat_apply(quat, torch.tensor(C.URR_OFFSETS).expand_as(pos))
+  pos = pos + quat_apply(quat, torch.tensor(offsets).expand_as(pos))
   return (
     torch.cat([root_pos.unsqueeze(-2), pos], -2),
     torch.cat([root_quat.unsqueeze(-2), quat], -2),
   )
 
 
-def test_robot_frame_goal_is_scalebfm_targets():
+@pytest.mark.parametrize("body_point", ["chest", "waist"])
+def test_robot_frame_goal_is_scalebfm_targets(body_point):
   """ScaleBFM's four target terms, from world poses: with the robot root ``(p, R)``,
   a reference part ``(P, Q)`` and the robot's own ``(p_b, q_b)``: ``R^-1 (P - p)``,
   ``R^-1 (P - p_b)``, ``R^-1 Q``, ``R^-1 Q q_b^-1 R``."""
   motion = _motion()
   times = torch.tensor([0, 25, 29, 30, 64, 99])
   aux, rep_state = _robot_state(motion, times)
-  rep = _rep(actor_goal="urr_robot_rel", chassis_window=True)
+  offsets = urr_offsets(body_point)
+  rep = _rep(actor_goal="urr_robot_rel", chassis_window=True, urr_body_point=body_point)
   wm_goal, goal = rep.compute_wm_goal(motion, times, aux, rep_state)
   torch.testing.assert_close(wm_goal, _rep().compute_wm_goal(motion, times, aux)[0])
   assert goal.shape[-1] == rep.actor_goal_dim(433) == NUM_GOAL_FRAMES * 6 * 18 == 1080
@@ -419,11 +423,15 @@ def test_robot_frame_goal_is_scalebfm_targets():
 
   idx = goal_window_indices(motion, times)
   ref_pos, ref_quat = _world_parts(
-    motion.fk, motion.root_pos_w[idx], motion.root_quat_w[idx], motion.joint_pos[idx]
+    motion.fk,
+    motion.root_pos_w[idx],
+    motion.root_quat_w[idx],
+    motion.joint_pos[idx],
+    offsets,
   )
   p, q = aux[:, None, None, :3], aux[:, None, None, 3:7]
   own_pos, own_quat = _world_parts(
-    motion.fk, aux[:, :3], aux[:, 3:7], rep_state[:, 10:27]
+    motion.fk, aux[:, :3], aux[:, 3:7], rep_state[:, 10:27], offsets
   )
   own_pos, own_quat = own_pos[:, None], own_quat[:, None]
   q = q.expand_as(ref_quat)
@@ -453,12 +461,43 @@ def test_robot_frame_goal_is_scalebfm_targets():
   )
 
   # "urr_robot" keeps [pos, rot] of the same parts.
-  rep = _rep(actor_goal="urr_robot", chassis_window=True)
+  rep = _rep(actor_goal="urr_robot", chassis_window=True, urr_body_point=body_point)
   short = rep.compute_wm_goal(motion, times, aux, rep_state)[1]
   assert short.shape[-1] == rep.actor_goal_dim(433) == NUM_GOAL_FRAMES * 6 * 9 == 540
   short = short.view(len(times), NUM_GOAL_FRAMES, 6, 9)
   torch.testing.assert_close(short[..., :3], goal[..., 0:3])
   torch.testing.assert_close(short[..., 3:], goal[..., 6:12])
+
+
+def test_waist_body_point_is_the_torso_link_origin():
+  """The waist keypoint is the torso_link origin, 0.2 m below the chest along the
+  link's z; the other keypoints and every orientation stay; the keypoint table
+  follows the body point."""
+  motion = _motion()
+  q = motion.joint_pos[:40]
+  chest_pos, chest_quat = urr_body_frames(motion.fk, q)
+  waist_pos, waist_quat = urr_body_frames(motion.fk, q, urr_offsets("waist"))
+  torch.testing.assert_close(waist_quat, chest_quat)
+  torch.testing.assert_close(waist_pos[:, 1:], chest_pos[:, 1:])
+  up = quat_apply(waist_quat[:, 0], torch.tensor([0.0, 0.0, 0.2]).expand(len(q), 3))
+  torch.testing.assert_close(chest_pos[:, 0] - waist_pos[:, 0], up)
+  zero, unit = torch.zeros(len(q), 3), torch.tensor([1.0, 0.0, 0.0, 0.0])
+  bodies = motion.fk(zero, unit.expand(len(q), 4), q, zero, zero, torch.zeros_like(q))
+  torso = motion.fk.body_names.index("torso_link")
+  torch.testing.assert_close(waist_pos[:, 0], bodies[0][:, torso])
+
+  chest_table = motion_urr_table(motion, True).clone()
+  waist_table = motion_urr_table(motion, True, urr_offsets("waist")).clone()
+  torch.testing.assert_close(
+    waist_table[:40],
+    motion_urr_rows(motion, torch.arange(40), True, urr_offsets("waist")),
+  )
+  assert not torch.equal(waist_table[:, :3], chest_table[:, :3])
+  # Only the body keypoint's position and linear velocity move.
+  body = list(range(3)) + list(range(C.URR_POSE_DIM, C.URR_POSE_DIM + 3))
+  rest = [i for i in range(chest_table.shape[1]) if i not in body]
+  torch.testing.assert_close(waist_table[:, rest], chest_table[:, rest])
+  torch.testing.assert_close(motion_urr_table(motion, True), chest_table)
 
 
 def test_robot_frame_goal_odometry_noise_moves_targets_not_the_robot():

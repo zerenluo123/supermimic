@@ -51,6 +51,7 @@ from supermimic.g1d.urr import (
   motion_urr_table,
   urr_body_frames,
   urr_features,
+  urr_offsets,
 )
 from supermimic.representations import (
   GOAL_REL_ORI_DIM,
@@ -105,6 +106,7 @@ class G1DRepresentation(GenCoordRepresentation):
     chassis_window: bool = False,
     urr_table: bool = True,
     planar_chassis: bool = False,
+    urr_body_point: str = "chest",
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
     (``"joints"``), the reference URR keypoint pose in that frame's reference
@@ -118,7 +120,9 @@ class G1DRepresentation(GenCoordRepresentation):
     one's) with its heading. ``urr_table``: tabulate the motion's keypoints once;
     without it they are computed from the reference on each use (no table, the
     same values). ``planar_chassis``: the world model moves the chassis only in
-    the plane, as the plant does (``apply_prediction``)."""
+    the plane, as the plant does (``apply_prediction``). ``urr_body_point``: the
+    body keypoint at the ``chest`` or at the ``waist`` (``URR_BODY_OFFSETS``), for
+    the actor's goal and the critic's keypoints alike."""
     super().__init__(C.NJ, torch.tensor(default_state_q(), device=device))
     if actor_goal not in ACTOR_GOALS:
       raise ValueError(f"actor_goal is one of {ACTOR_GOALS}, not {actor_goal!r}")
@@ -130,6 +134,7 @@ class G1DRepresentation(GenCoordRepresentation):
     self.chassis_window = chassis_window
     self.urr_table = urr_table
     self.planar_chassis = planar_chassis
+    self.urr_offsets = urr_offsets(urr_body_point)
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
     self.critic_extra_dim = 1 + ((NUM_GOAL_FRAMES + 1) * urr_width if critic_urr else 0)
     # The env's reward and failure rules (its motion command's ``world_reward`` and
@@ -159,7 +164,9 @@ class G1DRepresentation(GenCoordRepresentation):
     )
     self._torso_offset = torso_offset_xz(env.sim.mj_model)
     if self.urr_table and (self.actor_goal == "urr" or self.critic_urr):
-      motion_urr_table(env.command_manager.get_term("motion").motion, self.critic_urr)
+      motion_urr_table(
+        env.command_manager.get_term("motion").motion, self.critic_urr, self.urr_offsets
+      )
 
   def apply_prediction(
     self,
@@ -329,7 +336,7 @@ class G1DRepresentation(GenCoordRepresentation):
     ``rot``, as ScaleBFM's anchor's do."""
     idx = goal_window_indices(motion, motion_times)
     ref_pos, ref_quat = urr_body_frames(
-      motion.fk, motion.joint_pos[idx]
+      motion.fk, motion.joint_pos[idx], self.urr_offsets
     )  # (E, F, 5, ·)
     frames = target_pos.shape[1]
     base_pos, base_quat = subtract_frame_transforms(
@@ -358,7 +365,7 @@ class G1DRepresentation(GenCoordRepresentation):
       parts = torch.cat([pos, rot], dim=-1)
     else:
       qj = decompose_rep_state(rep_state)[4]
-      own_pos, own_quat = urr_body_frames(motion.fk, qj)  # (E, 5, ·)
+      own_pos, own_quat = urr_body_frames(motion.fk, qj, self.urr_offsets)  # (E, 5, ·)
       unit = own_quat.new_tensor([1.0, 0.0, 0.0, 0.0]).expand(qj.shape[0], 1, 4)
       own_pos = torch.cat([own_pos.new_zeros(qj.shape[0], 1, 3), own_pos], dim=-2)
       own_quat = torch.cat([unit, own_quat], dim=-2).unsqueeze(1).expand_as(quat)
@@ -523,7 +530,7 @@ class G1DRepresentation(GenCoordRepresentation):
       return column
     idx = goal_window_indices(motion, motion_times)
     ref = self._motion_urr(motion, idx, True).reshape(idx.shape[0], -1)
-    pose, twist = urr_features(motion.fk, qj, vj, v_b, w_b)
+    pose, twist = urr_features(motion.fk, qj, vj, v_b, w_b, self.urr_offsets)
     return torch.cat([column, ref, pose, twist], dim=-1)
 
   def _motion_urr(
@@ -531,8 +538,9 @@ class G1DRepresentation(GenCoordRepresentation):
   ) -> torch.Tensor:
     """The reference keypoints at ``idx``, ``[pose, twist]`` (the pose at least)."""
     if self.urr_table:
-      return motion_urr_table(motion, self.critic_urr or with_twist)[idx]
-    return motion_urr_rows(motion, idx, with_twist)
+      table = motion_urr_table(motion, self.critic_urr or with_twist, self.urr_offsets)
+      return table[idx]
+    return motion_urr_rows(motion, idx, with_twist, self.urr_offsets)
 
   def loss_blocks(
     self, rep_state: torch.Tensor, aux_state: torch.Tensor

@@ -84,6 +84,11 @@ class SuperMimicRunnerCfg:
   dropping the predicted Δv_z, Δw_x, Δw_y. Off, the imagined chassis can lift and
   tilt; its height and tilt channels, constant in every collected state, then enter
   the dynamics through a zero-std normalizer and the actor gradient can blow up."""
+  g1d_urr_body_point: Literal["chest", "waist"] = "chest"
+  """G1-D URR body keypoint, for the actor goal and the critic's keypoints: the
+  ``chest``, 0.2 m above the torso_link origin along its z (the g1d-urr
+  controller's), or the ``waist``, the torso_link origin itself (the waist yaw
+  joint), as ScaleBFM places its points at link origins."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False
@@ -181,6 +186,7 @@ def build_world_model(
     g1d_chassis_window=cfg.g1d_chassis_window,
     g1d_urr_table=cfg.g1d_urr_table,
     g1d_planar_chassis=cfg.g1d_planar_chassis,
+    g1d_urr_body_point=cfg.g1d_urr_body_point,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)

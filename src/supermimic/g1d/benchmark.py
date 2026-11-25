@@ -117,6 +117,7 @@ def load_actor(
     g1d_critic_urr=cfg.g1d_critic_urr,
     g1d_chassis_window=cfg.g1d_chassis_window,
     g1d_urr_table=cfg.g1d_urr_table,
+    g1d_urr_body_point=cfg.g1d_urr_body_point,
   )
   rep.actor_goal_noise = False
   wm = WorldModel(rep, None, None, num_goals, env.action_manager.total_action_dim)  # type: ignore[arg-type]

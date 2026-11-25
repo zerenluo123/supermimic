@@ -76,6 +76,10 @@ URR_OFFSETS = (
   (0.0, 0.0, 0.0),
   (0.0, 0.0, 0.0),
 )
+# The body keypoint's offset from the torso_link origin by ``body_point``: the chest
+# above it (``URR_OFFSETS``), or the origin itself, the waist yaw joint, where
+# ScaleBFM would put it (it uses link origins).
+URR_BODY_OFFSETS = {"chest": URR_OFFSETS[0], "waist": (0.0, 0.0, 0.0)}
 URR_NUM_ORIENTED = 3
 URR_POSE_DIM = 3 * len(URR_BODIES) + 6 * URR_NUM_ORIENTED  # positions, rot6d: 33
 URR_VEL_DIM = 3 * len(URR_BODIES) + 3 * URR_NUM_ORIENTED  # linear, angular: 24
