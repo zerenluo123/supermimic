@@ -18,7 +18,7 @@ from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import FAILURE_RULES, G1DMotionCommand
 from supermimic.scripts.viewers import SuperMimicViserViewer
 
-RULERS = ("train", "public")
+RULERS = ("soft", "strict", "public")
 NO_FAILURE = 1.0e9  # a failure-rule threshold nothing reaches
 
 
@@ -101,7 +101,7 @@ class G1DViserViewer(SuperMimicViserViewer):
     with gui.add_folder("Clips", order=0):
       text_filter = gui.add_text("Filter", initial_value="")
       failed_only = gui.add_checkbox(
-        "Failed only (train rule)", initial_value=False, disabled=not self.clip_table
+        "Failed only (soft rule)", initial_value=False, disabled=not self.clip_table
       )
       clip_dropdown = gui.add_dropdown(
         "Motion Clip", options=self.motion_names, initial_value=self.motion_names[0]
@@ -122,7 +122,7 @@ class G1DViserViewer(SuperMimicViserViewer):
       names = [n for n in self.motion_names if needle in n.lower()]
       if failed_only.value:
         names = [
-          n for n in names if self.clip_table.get(n, {}).get("train", {}).get("failed")
+          n for n in names if self.clip_table.get(n, {}).get("soft", {}).get("failed")
         ]
       count.content = f"{len(names)} of {len(self.motion_names)} clips"
       if names:

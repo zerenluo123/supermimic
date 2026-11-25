@@ -11,6 +11,7 @@ from mjlab.utils.lab_api.math import matrix_from_quat
 from supermimic.g1d import constants as C
 from supermimic.g1d.env_cfg import (
   ACTION_RATE_WEIGHT,
+  FAILURE_RULES,
   JOINT_LIMIT_WEIGHT,
   TRACKING_TERMS,
   WORLD_TRACKING_TERMS,
@@ -231,17 +232,25 @@ def test_world_reward_drops_the_chassis_terms():
   assert sum(cfg.rewards[name].weight for name in positive) == 4.0
 
 
-def test_failure_rule_sets_the_chassis_and_column_terminations():
+def test_failure_rules_are_soft_unless_strict():
+  def thresholds(cfg):
+    terms = cfg.terminations
+    return {r: terms[r].params["threshold"] for r in FAILURE_RULES if r in terms}
+
   cfg = g1d_env_cfg()
+  assert thresholds(cfg) == {"chassis_xy": 0.25, "upper_body": C.UPPER_THRESHOLD}
+  assert cfg.commands["motion"].world_failure
+  cfg.commands["motion"].failure_rule = "strict"
   apply_failure_rule(cfg)
-  assert cfg.terminations["chassis_xy"].params["threshold"] == C.CHASSIS_THRESHOLD
-  cfg.commands["motion"].chassis_failure = 0.25
+  assert thresholds(cfg) == {
+    "chassis_xy": C.CHASSIS_THRESHOLD,
+    "upper_body": C.UPPER_THRESHOLD,
+    "column": C.COLUMN_THRESHOLD,
+  }
+  assert not cfg.commands["motion"].world_failure
+  cfg.commands["motion"].failure_rule = "soft"
   apply_failure_rule(cfg)
-  assert cfg.terminations["chassis_xy"].params["threshold"] == 0.25
-  assert cfg.terminations["column"].params["threshold"] == C.COLUMN_THRESHOLD
-  cfg.commands["motion"].column_failure = 0.0
-  apply_failure_rule(cfg)
-  assert "column" not in cfg.terminations
+  assert thresholds(cfg) == {"chassis_xy": 0.25, "upper_body": C.UPPER_THRESHOLD}
 
 
 def test_stiff_chassis_gains_are_the_soft_ones_over_the_loop_time():

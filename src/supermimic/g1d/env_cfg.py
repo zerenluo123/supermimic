@@ -10,8 +10,10 @@ G1-D specifics (from SuperMimic-Reproduced, g1d):
   * proprio: GenCoord's terms on the 17 state joints, the column with its bias,
     and the tanh-saturated previous action;
   * reward and failure rules on the forward kinematics of that state, the same
-    functions the world model uses; failure = training termination: chassis world
-    xy, upper bodies re-anchored at the chassis, and the column top height;
+    functions the world model uses; failure = training termination
+    (``FAILURE_RULE_PRESETS``): ``soft``, every tracked body 25 cm off its reference
+    in the world, or ``strict``, chassis world xy 10 cm, upper bodies re-anchored at
+    the chassis 25 cm and the column top height 10 cm;
   * reset noise: AGV xy and yaw only, speed along the heading (differential
     drive), joints and column +-0.1.
 """
@@ -24,7 +26,7 @@ import math
 import os
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
 import torch
@@ -166,6 +168,33 @@ def failure_errors(
 
 
 FAILURE_RULES = ("chassis_xy", "upper_body", "column")
+
+
+@dataclass(frozen=True)
+class FailureRule:
+  """Thresholds (m) of ``FAILURE_RULES``, 0 leaving a rule out, and the frame of the
+  upper-body rule: the world (``world_upper``) or the reference re-anchored at the
+  robot's chassis."""
+
+  chassis_xy: float
+  upper_body: float
+  column: float
+  world_upper: bool
+
+  def thresholds(self) -> tuple[float, float, float]:
+    return self.chassis_xy, self.upper_body, self.column
+
+
+FAILURE_RULE_PRESETS = {
+  # Every tracked body, the chassis too, 25 cm off its reference in the world frame,
+  # as ScaleBFM measures them (it ends at 0.5 m); no column rule, as ScaleBFM.
+  "soft": FailureRule(0.25, C.UPPER_THRESHOLD, 0.0, world_upper=True),
+  # The G1's rules carried over: the chassis 10 cm off in the world, the upper body
+  # 25 cm off its reference re-anchored at the chassis, the column top 10 cm.
+  "strict": FailureRule(
+    C.CHASSIS_THRESHOLD, C.UPPER_THRESHOLD, C.COLUMN_THRESHOLD, world_upper=False
+  ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -674,16 +703,13 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   """Score every tracked body against its reference in the world frame, as ScaleBFM
   does, instead of re-anchoring the bodies at the robot's chassis; the two chassis
   terms go (``apply_reward_rule``). The world model's reward follows."""
-  world_failure: bool = False
-  """The upper-body failure rule measures each body against its reference in the
-  world frame instead of re-anchored at the robot's chassis; the world model's
-  imagined termination follows. The thresholds stay the terminations' own."""
-  chassis_failure: float = C.CHASSIS_THRESHOLD
-  """The chassis failure rule's threshold (m), set on its termination by
+  failure_rule: Literal["soft", "strict"] = "soft"
+  """The failure rules (``FAILURE_RULE_PRESETS``), set on the terminations by
   ``apply_failure_rule``; the world model's imagined termination follows."""
-  column_failure: float = C.COLUMN_THRESHOLD
-  """The column failure rule's threshold (m), as ``chassis_failure``; 0 drops the
-  rule."""
+  world_failure: bool = True
+  """Set with the failure rules (``set_failure_rule``): the upper-body rule
+  measures each body against its reference in the world frame instead of
+  re-anchored at the robot's chassis."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -1107,17 +1133,12 @@ def g1d_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   rewards["joint_limit"] = RewardTermCfg(
     func=g1d_reward_term, weight=JOINT_LIMIT_WEIGHT, params={"name": "joint_limit"}
   )
-  thresholds = (C.CHASSIS_THRESHOLD, C.UPPER_THRESHOLD, C.COLUMN_THRESHOLD)
   terminations = {
     "time_out": TerminationTermCfg(func=base_mdp.time_out, time_out=True),
     "motion_end": TerminationTermCfg(
       func=track_mdp.motion_end, time_out=True, params={"command_name": "motion"}
     ),
   }
-  for rule, threshold in zip(FAILURE_RULES, thresholds, strict=True):
-    terminations[rule] = TerminationTermCfg(
-      func=g1d_failure, params={"rule": rule, "threshold": threshold}
-    )
 
   cfg = ManagerBasedRlEnvCfg(
     # Every env origin at 0: the base is fixed to the world through the planar
@@ -1159,20 +1180,30 @@ def g1d_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     motion.velocity_range = {}
     motion.joint_position_range = (0.0, 0.0)
     motion.sampling_mode = "start"
+  apply_failure_rule(cfg)
   return cfg
 
 
-def apply_failure_rule(cfg: ManagerBasedRlEnvCfg) -> None:
-  """Set the chassis and column terminations' thresholds to ``chassis_failure`` and
-  ``column_failure`` (0 drops the column rule). Call once the command cfg is final,
-  before the env is built."""
+def set_failure_rule(cfg: ManagerBasedRlEnvCfg, rule: FailureRule) -> None:
+  """Make ``rule`` the env's failure terminations, one per rule of ``FAILURE_RULES``
+  with a threshold, and set the motion command's ``world_failure`` with it."""
   motion = cfg.commands["motion"]
   assert isinstance(motion, G1DMotionCommandCfg)
-  cfg.terminations["chassis_xy"].params["threshold"] = motion.chassis_failure
-  if motion.column_failure > 0:
-    cfg.terminations["column"].params["threshold"] = motion.column_failure
-  else:
-    cfg.terminations.pop("column", None)
+  motion.world_failure = rule.world_upper
+  for name, threshold in zip(FAILURE_RULES, rule.thresholds(), strict=True):
+    cfg.terminations.pop(name, None)
+    if threshold > 0:
+      cfg.terminations[name] = TerminationTermCfg(
+        func=g1d_failure, params={"rule": name, "threshold": threshold}
+      )
+
+
+def apply_failure_rule(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Set the env's failure rules to the motion command's ``failure_rule``. Call
+  once the command cfg is final, before the env is built."""
+  motion = cfg.commands["motion"]
+  assert isinstance(motion, G1DMotionCommandCfg)
+  set_failure_rule(cfg, FAILURE_RULE_PRESETS[motion.failure_rule])
 
 
 def apply_reward_rule(cfg: ManagerBasedRlEnvCfg) -> None:

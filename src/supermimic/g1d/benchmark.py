@@ -2,8 +2,8 @@
 
 Every clip is played once from its first frame with the deterministic policy: no
 action, proprio, goal or reset noise and no domain randomization. A clip *fails*
-when a failure rule fires (the training termination, or another ruler's
-thresholds) and stops there. Normalized return = summed step reward / (0.1 *
+when a failure rule of the ruler fires (``RULERS``: the training rules, or the old
+Reproduced ones) and stops there. Normalized return = summed step reward / (0.1 *
 steps played), also over the whole clip (``return_full_clip``). Also reported:
 which rule ended each failed clip and the tracking precision over the steps
 played (column height error, chassis world xy distance, mean upper-body distance
@@ -14,14 +14,20 @@ wrist world distance, mean upper-joint error).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import torch
 from mjlab.envs import ManagerBasedRlEnv
 
-from supermimic.g1d import constants as C
-from supermimic.g1d.env_cfg import FAILURE_RULES, G1DMotionCommand, g1d_env_cfg
+from supermimic.g1d.env_cfg import (
+  FAILURE_RULE_PRESETS,
+  FAILURE_RULES,
+  FailureRule,
+  G1DMotionCommand,
+  g1d_env_cfg,
+  set_failure_rule,
+)
 from supermimic.models import MultiEncoderAE
 from supermimic.representations import create_representation
 from supermimic.runners.run_config import load_runner_cfg
@@ -32,32 +38,13 @@ from supermimic.utils.helpers import unpack_obs_dims
 MAX_STEP_REWARD = 0.1  # dt * the positive tracking weights
 
 
-@dataclass(frozen=True)
-class Ruler:
-  """Failure thresholds (m) of ``FAILURE_RULES``; 0 leaves a rule out.
-  ``world_upper``: the upper-body rule in the world frame (``world_failure``)."""
-
-  chassis_xy: float = C.CHASSIS_THRESHOLD
-  upper_body: float = C.UPPER_THRESHOLD
-  column: float = C.COLUMN_THRESHOLD
-  world_upper: bool = False
-
-  def thresholds(self) -> tuple[float, float, float]:
-    return self.chassis_xy, self.upper_body, self.column
-
-
-# The three rulers of the Reproduced comparison: the training rule, the common
-# ruler (the earlier 0.5 m chassis rule) with the column rule, and without it.
+# The training rules (``soft``, ``strict``), and the common ruler of the Reproduced
+# comparison (the strict rules with the earlier 0.5 m chassis rule) with the column
+# rule and without it.
 RULERS = {
-  "train": Ruler(),
-  "public": Ruler(chassis_xy=0.5),
-  "public_nocol": Ruler(chassis_xy=0.5, column=0.0),
-  # World-frame rules (ScaleBFM measures every body in the world frame): the upper
-  # body in the world frame, with the training chassis rule or 0.25 m for it.
-  "ruler1": Ruler(world_upper=True),
-  "ruler2": Ruler(chassis_xy=0.25, world_upper=True),
-  # ruler2 without the column rule (ScaleBFM has none).
-  "ruler3": Ruler(chassis_xy=0.25, column=0.0, world_upper=True),
+  **FAILURE_RULE_PRESETS,
+  "public": replace(FAILURE_RULE_PRESETS["strict"], chassis_xy=0.5),
+  "public_nocol": replace(FAILURE_RULE_PRESETS["strict"], chassis_xy=0.5, column=0.0),
 }
 
 
@@ -87,7 +74,7 @@ def checkpoint_plant(checkpoint_dir: Path) -> dict:
 
 def make_benchmark_env(
   motion_file: str,
-  ruler: Ruler,
+  ruler: FailureRule,
   num_envs: int,
   device: str,
   plant: dict | None = None,
@@ -98,12 +85,7 @@ def make_benchmark_env(
   cfg.events = {}
   cfg.commands["motion"].motion_file = motion_file
   cfg.actions["joint_pos"].stiff_chassis = (plant or {}).get("chassis") == "stiff"
-  cfg.commands["motion"].world_failure = ruler.world_upper
-  for rule, threshold in zip(FAILURE_RULES, ruler.thresholds(), strict=True):
-    if threshold > 0:
-      cfg.terminations[rule].params["threshold"] = threshold
-    else:
-      cfg.terminations.pop(rule)
+  set_failure_rule(cfg, ruler)
   cfg.scene.num_envs = num_envs
   return ManagerBasedRlEnv(cfg=cfg, device=device)
 
