@@ -56,6 +56,8 @@ RULERS = {
   # body in the world frame, with the training chassis rule or 0.25 m for it.
   "ruler1": Ruler(world_upper=True),
   "ruler2": Ruler(chassis_xy=0.25, world_upper=True),
+  # ruler2 without the column rule (ScaleBFM has none).
+  "ruler3": Ruler(chassis_xy=0.25, column=0.0, world_upper=True),
 }
 
 

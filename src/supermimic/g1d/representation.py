@@ -22,6 +22,7 @@ The G1-D adds:
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 import torch
@@ -148,8 +149,12 @@ class G1DRepresentation(GenCoordRepresentation):
     columns = sim_context.find("encoder_bias")
     self._encoder_bias = None if columns is None else (columns, sim_context)
     terms = env.cfg.terminations
+    # A rule the env leaves out never fails: its error over an infinite threshold is 0.
     self._failure_thresholds = torch.tensor(
-      [terms[rule].params["threshold"] for rule in FAILURE_RULES],
+      [
+        terms[rule].params["threshold"] if rule in terms else math.inf
+        for rule in FAILURE_RULES
+      ],
       device=self._default_joint_pos.device,
     )
     self._torso_offset = torso_offset_xz(env.sim.mj_model)

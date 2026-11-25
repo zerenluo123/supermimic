@@ -231,13 +231,17 @@ def test_world_reward_drops_the_chassis_terms():
   assert sum(cfg.rewards[name].weight for name in positive) == 4.0
 
 
-def test_chassis_failure_sets_the_chassis_termination():
+def test_failure_rule_sets_the_chassis_and_column_terminations():
   cfg = g1d_env_cfg()
   apply_failure_rule(cfg)
   assert cfg.terminations["chassis_xy"].params["threshold"] == C.CHASSIS_THRESHOLD
   cfg.commands["motion"].chassis_failure = 0.25
   apply_failure_rule(cfg)
   assert cfg.terminations["chassis_xy"].params["threshold"] == 0.25
+  assert cfg.terminations["column"].params["threshold"] == C.COLUMN_THRESHOLD
+  cfg.commands["motion"].column_failure = 0.0
+  apply_failure_rule(cfg)
+  assert "column" not in cfg.terminations
 
 
 def test_stiff_chassis_gains_are_the_soft_ones_over_the_loop_time():

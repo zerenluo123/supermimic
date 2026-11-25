@@ -681,6 +681,9 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   chassis_failure: float = C.CHASSIS_THRESHOLD
   """The chassis failure rule's threshold (m), set on its termination by
   ``apply_failure_rule``; the world model's imagined termination follows."""
+  column_failure: float = C.COLUMN_THRESHOLD
+  """The column failure rule's threshold (m), as ``chassis_failure``; 0 drops the
+  rule."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -1160,11 +1163,16 @@ def g1d_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
 
 def apply_failure_rule(cfg: ManagerBasedRlEnvCfg) -> None:
-  """Set the chassis termination's threshold to ``chassis_failure``. Call once the
-  command cfg is final, before the env is built."""
+  """Set the chassis and column terminations' thresholds to ``chassis_failure`` and
+  ``column_failure`` (0 drops the column rule). Call once the command cfg is final,
+  before the env is built."""
   motion = cfg.commands["motion"]
   assert isinstance(motion, G1DMotionCommandCfg)
   cfg.terminations["chassis_xy"].params["threshold"] = motion.chassis_failure
+  if motion.column_failure > 0:
+    cfg.terminations["column"].params["threshold"] = motion.column_failure
+  else:
+    cfg.terminations.pop("column", None)
 
 
 def apply_reward_rule(cfg: ManagerBasedRlEnvCfg) -> None:
