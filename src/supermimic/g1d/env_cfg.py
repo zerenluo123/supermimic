@@ -125,6 +125,19 @@ def torso_offset_xz(mj_model) -> tuple[float, float]:
   raise KeyError("torso_link")
 
 
+def _reanchored_pos(
+  ref_pos: torch.Tensor,
+  ref_quat: torch.Tensor,
+  root_pos: torch.Tensor,
+  root_quat: torch.Tensor,
+) -> torch.Tensor:
+  """The reference body positions re-anchored at the robot root (xy + yaw), as the
+  reward re-anchors them."""
+  zero = torch.zeros_like(ref_pos)
+  aux = torch.cat([root_pos, root_quat], dim=-1)
+  return _reanchor_targets(ref_pos, ref_quat, zero, zero, aux)[0]
+
+
 def failure_errors(
   root_pos: torch.Tensor,
   body_pos: torch.Tensor,
@@ -138,7 +151,7 @@ def failure_errors(
   upper-body distance to its reference re-anchored at the chassis (xy + yaw),
   column top (Yaw_Link) height difference. Bodies are ``C.TRACKED_BODIES``."""
   chassis = (ref_pos[..., 0, :2] - root_pos[..., :2]).norm(dim=-1)
-  tgt_pos, _ = _reanchor_targets(ref_pos, ref_quat, root_pos, root_quat)
+  tgt_pos = _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
   upper = (tgt_pos[..., 1:, :] - body_pos[..., 1:, :]).norm(dim=-1).amax(-1)
   t = C.TRACKED_BODIES.index("torso_link")
   column = (
@@ -825,7 +838,9 @@ def tracking_errors(
 ) -> torch.Tensor:
   """``(..., 6)`` squared errors of ``TRACKING_TERMS``, as
   :func:`supermimic.utils.tracking_reward.tracking_reward` scores them."""
-  tgt_pos, tgt_mat = _reanchor_targets(ref_pos, ref_quat, root_pos, root_quat)
+  tgt_pos, tgt_mat, tgt_lin_vel, tgt_ang_vel = _reanchor_targets(
+    ref_pos, ref_quat, ref_lin_vel, ref_ang_vel, torch.cat([root_pos, root_quat], -1)
+  )
   return torch.stack(
     [
       ((body_pos[..., 0, :] - ref_pos[..., 0, :]) ** 2).sum(-1),
@@ -835,8 +850,8 @@ def tracking_errors(
       ** 2,
       ((body_pos - tgt_pos) ** 2).sum(-1).mean(-1),
       (rotation_error_magnitude(body_rot, tgt_mat) ** 2).mean(-1),
-      ((body_lin_vel - ref_lin_vel) ** 2).sum(-1).mean(-1),
-      ((body_ang_vel - ref_ang_vel) ** 2).sum(-1).mean(-1),
+      ((body_lin_vel - tgt_lin_vel) ** 2).sum(-1).mean(-1),
+      ((body_ang_vel - tgt_ang_vel) ** 2).sum(-1).mean(-1),
     ],
     dim=-1,
   )
@@ -910,7 +925,7 @@ def _terms_from(
   terms["failure"] = failure_errors(
     root_pos, pos, quat, root_quat, ref_pos, ref_quat, offset
   )
-  tgt_pos, _ = _reanchor_targets(ref_pos, ref_quat, root_pos, root_quat)
+  tgt_pos = _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
   terms["upper_err"] = (tgt_pos[:, 1:] - pos[:, 1:]).norm(dim=-1).mean(-1)
   terms["joint_err"] = (qj[:, 1:] - ref_joint_pos[:, 1:]).abs().mean(-1)
   terms["column_err"] = (qj[:, 0] - ref_joint_pos[:, 0]).abs()
