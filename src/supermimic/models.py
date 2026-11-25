@@ -62,9 +62,11 @@ class Dynamics(nn.Module):
     action_offset: torch.Tensor,
     hidden_dims: tuple[int, ...],
     tanh_mask: torch.Tensor | None = None,
+    bf16: bool = True,
   ):
     super().__init__()
 
+    self.bf16 = bf16  # the MLP under bfloat16 autocast on CUDA (upstream d88804a)
     self.num_rep_state = representation.rep_state_dim
     self.num_actions = num_actions
     self.dt = representation.dt
@@ -101,7 +103,7 @@ class Dynamics(nn.Module):
     state_norm = self.state_normalizer(rep_state)
     action_norm = self.action_normalizer(self.proc(action))
     x = torch.cat([state_norm, action_norm, sim_ctx], dim=-1)
-    with torch.autocast("cuda", torch.bfloat16, enabled=x.is_cuda):
+    with torch.autocast("cuda", torch.bfloat16, enabled=x.is_cuda and self.bf16):
       prediction = self.mlp(x).float()
     return self._apply_prediction(aux_state, rep_state, prediction, self.dt)
 

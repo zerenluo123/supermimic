@@ -87,6 +87,9 @@ class SuperMimicRunnerCfg:
   history_length: int = 1
   termination_softness: float = 0.05
   dynamics_hidden_dims: tuple[int, ...] = (2048, 2048, 2048)
+  dynamics_bf16: bool = True
+  """Run the dynamics MLP under bfloat16 autocast (upstream d88804a); False keeps it
+  in float32. The imagined actor has its own switch, ``policy.bf16``."""
   wm: WorldModelLearnerCfg = field(default_factory=WorldModelLearnerCfg)
   max_iterations: int = 1000000
   replay_ratio: int = 16
@@ -193,6 +196,7 @@ def build_world_model(
     action_offset,
     hidden_dims=cfg.dynamics_hidden_dims,
     tanh_mask=getattr(action_term, "tanh_mask", None),
+    bf16=cfg.dynamics_bf16,
   ).to(device)
 
   return WorldModel(
@@ -569,6 +573,10 @@ class SuperMimicRunner:
       )
 
       actions = self.policy_learner.actor(actor_td)
+      if self.policy_learner.cfg.collect_noise > 0:
+        actions = (
+          actions + torch.randn_like(actions) * self.policy_learner.cfg.collect_noise
+        )
 
       extra_fields = {"sim_ctx": sim_ctx}
       if self._stores_actor_obs:

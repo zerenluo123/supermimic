@@ -28,6 +28,12 @@ class BpttPolicyLearnerCfg:
   survival_masking: bool = True
   beta2: float = 0.95  # faster Adam EMA recovery after gradient spikes
   grad_clip_value: float = 0.1  # per-parameter gradient element clipping
+  collect_noise: float = 0.0
+  """Std of the Gaussian noise added to the actions sent to the simulator in data
+  collection (0.1 before upstream 7e94b07); 0 sends the actor's action as is."""
+  bf16: bool = True
+  """Run the actor of the imagined rollout under bfloat16 autocast (upstream
+  d88804a); False keeps it in float32."""
 
 
 @dataclass
@@ -103,7 +109,7 @@ class BpttPolicyLearner:
     ret, aux_loss, survival = 0.0, 0.0, 1.0
     rollout: list[TensorDict] = []
     for t in range(cfg.horizon):
-      with torch.autocast("cuda", torch.bfloat16, enabled=obs.is_cuda):
+      with torch.autocast("cuda", torch.bfloat16, enabled=obs.is_cuda and cfg.bf16):
         actions = self._rollout_actor(obs).float()
       next_obs, reward, term_prob = self.wm_env.step(actions)
       step = {"critic": obs["critic"], "reward": reward, "done": term_prob}
