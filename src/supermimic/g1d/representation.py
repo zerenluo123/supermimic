@@ -103,6 +103,7 @@ class G1DRepresentation(GenCoordRepresentation):
     critic_urr: bool = False,
     chassis_window: bool = False,
     urr_table: bool = True,
+    planar_chassis: bool = False,
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
     (``"joints"``), the reference URR keypoint pose in that frame's reference
@@ -115,7 +116,8 @@ class G1DRepresentation(GenCoordRepresentation):
     actor every window frame's reference chassis position (not only the current
     one's) with its heading. ``urr_table``: tabulate the motion's keypoints once;
     without it they are computed from the reference on each use (no table, the
-    same values)."""
+    same values). ``planar_chassis``: the world model moves the chassis only in
+    the plane, as the plant does (``apply_prediction``)."""
     super().__init__(C.NJ, torch.tensor(default_state_q(), device=device))
     if actor_goal not in ACTOR_GOALS:
       raise ValueError(f"actor_goal is one of {ACTOR_GOALS}, not {actor_goal!r}")
@@ -126,6 +128,7 @@ class G1DRepresentation(GenCoordRepresentation):
     self.critic_urr = critic_urr
     self.chassis_window = chassis_window
     self.urr_table = urr_table
+    self.planar_chassis = planar_chassis
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
     self.critic_extra_dim = 1 + ((NUM_GOAL_FRAMES + 1) * urr_width if critic_urr else 0)
     # The env's reward rule (its motion command's ``world_reward``), set by bind.
@@ -148,6 +151,27 @@ class G1DRepresentation(GenCoordRepresentation):
     self._torso_offset = torso_offset_xz(env.sim.mj_model)
     if self.urr_table and (self.actor_goal == "urr" or self.critic_urr):
       motion_urr_table(env.command_manager.get_term("motion").motion, self.critic_urr)
+
+  def apply_prediction(
+    self,
+    aux_state: torch.Tensor,
+    curr_rep_state: torch.Tensor,
+    prediction: torch.Tensor,
+    dt: float,
+  ) -> tuple[torch.Tensor, torch.Tensor]:
+    """GenCoord's integration; with ``planar_chassis`` the predicted Δv_z, Δw_x,
+    Δw_y are dropped, so a planar state (the plant's) stays planar: z and g_b keep
+    their values, as in every collected state."""
+    if self.planar_chassis:
+      prediction = torch.cat(
+        [
+          prediction[..., :2],
+          torch.zeros_like(prediction[..., 2:5]),
+          prediction[..., 5:],
+        ],
+        dim=-1,
+      )
+    return super().apply_prediction(aux_state, curr_rep_state, prediction, dt)
 
   # ------------------------------------------------------------------
   # Proprio

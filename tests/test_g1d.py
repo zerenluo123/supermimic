@@ -311,3 +311,37 @@ def test_fine_bins_cover_the_shard_timeline():
     assert int(frames.min()) >= 0 and int(frames.max()) <= total - 2
     lo, hi = b * (total - 2) // 404, (b + 1) * (total - 2) // 404
     assert int(frames.min()) >= lo and int(frames.max()) <= max(hi, lo + 1)
+
+
+@pytest.mark.parametrize("planar", [False, True])
+def test_planar_chassis_keeps_the_imagined_chassis_on_the_floor(planar):
+  from supermimic.g1d.representation import G1DRepresentation
+
+  rep = G1DRepresentation("cpu", planar_chassis=planar)
+  rep.substep_coeff = 0.6
+  B, N = 8, rep.num_joints
+  yaw = torch.linspace(-3.0, 3.0, B)
+  aux = torch.cat(
+    [torch.randn(B, 2), torch.full((B, 1), 0.11), yaw_quat_from_angle(yaw)], -1
+  )
+  rep_state = torch.cat(
+    [
+      torch.full((B, 1), 0.11),
+      torch.tensor([0.0, 0.0, -1.0]).expand(B, 3),
+      torch.randn(B, 2),
+      torch.zeros(B, 3),
+      torch.randn(B, 1),  # v_xy, v_z w_x w_y, w_z
+      torch.randn(B, 2 * N),
+    ],
+    -1,
+  )
+  for _ in range(5):
+    aux, rep_state = rep.apply_prediction(
+      aux, rep_state, torch.randn(B, rep.prediction_dim), 0.02
+    )
+  out_of_plane = (
+    (rep_state[:, 0] - 0.11).abs().max()
+    + (rep_state[:, 1:3]).abs().max()
+    + rep_state[:, [6, 7, 8]].abs().max()
+  )
+  assert (out_of_plane < 1e-5) == planar

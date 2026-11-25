@@ -79,6 +79,11 @@ class SuperMimicRunnerCfg:
   """G1-D: tabulate the motion's URR keypoints once (on the GPU); False computes
   them from the reference joints on each use instead, the same values without the
   table's memory."""
+  g1d_planar_chassis: bool = False
+  """G1-D world model: keep the chassis in the plane (x, y, yaw) as the plant does,
+  dropping the predicted Δv_z, Δw_x, Δw_y. Off, the imagined chassis can lift and
+  tilt; its height and tilt channels, constant in every collected state, then enter
+  the dynamics through a zero-std normalizer and the actor gradient can blow up."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False
@@ -175,6 +180,7 @@ def build_world_model(
     g1d_critic_urr=cfg.g1d_critic_urr,
     g1d_chassis_window=cfg.g1d_chassis_window,
     g1d_urr_table=cfg.g1d_urr_table,
+    g1d_planar_chassis=cfg.g1d_planar_chassis,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)
