@@ -15,7 +15,7 @@ from mjlab.envs import ManagerBasedRlEnvCfg  # noqa: E402
 from mjlab.tasks.registry import list_tasks, load_env_cfg  # noqa: E402
 
 import supermimic.tasks  # noqa: E402, F401
-from supermimic.g1d.env_cfg import apply_reward_rule  # noqa: E402
+from supermimic.g1d.env_cfg import apply_failure_rule, apply_reward_rule  # noqa: E402
 from supermimic.runners.supermimic_runner import (  # noqa: E402
   SuperMimicRunner,
   SuperMimicRunnerCfg,
@@ -129,6 +129,7 @@ def main() -> None:
   if chosen_task.endswith("-G1D"):
     apply_g1d_defaults(args.runner, remaining_args)
     apply_reward_rule(args.env)
+    apply_failure_rule(args.env)
 
   args.env.commands["motion"].sampling_mode = (
     "external" if args.runner.sampling_mode == "return" else args.runner.sampling_mode

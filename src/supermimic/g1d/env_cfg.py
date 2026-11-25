@@ -678,6 +678,9 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   """The upper-body failure rule measures each body against its reference in the
   world frame instead of re-anchored at the robot's chassis; the world model's
   imagined termination follows. The thresholds stay the terminations' own."""
+  chassis_failure: float = C.CHASSIS_THRESHOLD
+  """The chassis failure rule's threshold (m), set on its termination by
+  ``apply_failure_rule``; the world model's imagined termination follows."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -1154,6 +1157,14 @@ def g1d_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     motion.joint_position_range = (0.0, 0.0)
     motion.sampling_mode = "start"
   return cfg
+
+
+def apply_failure_rule(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Set the chassis termination's threshold to ``chassis_failure``. Call once the
+  command cfg is final, before the env is built."""
+  motion = cfg.commands["motion"]
+  assert isinstance(motion, G1DMotionCommandCfg)
+  cfg.terminations["chassis_xy"].params["threshold"] = motion.chassis_failure
 
 
 def apply_reward_rule(cfg: ManagerBasedRlEnvCfg) -> None:

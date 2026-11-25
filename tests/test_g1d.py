@@ -15,6 +15,7 @@ from supermimic.g1d.env_cfg import (
   TRACKING_TERMS,
   WORLD_TRACKING_TERMS,
   _terms_from,
+  apply_failure_rule,
   apply_reward_rule,
   effective_action,
   failure_errors,
@@ -228,6 +229,15 @@ def test_world_reward_drops_the_chassis_terms():
   positive = {name for name, term in cfg.rewards.items() if term.weight > 0}
   assert positive == {name for name, _, _ in WORLD_TRACKING_TERMS}
   assert sum(cfg.rewards[name].weight for name in positive) == 4.0
+
+
+def test_chassis_failure_sets_the_chassis_termination():
+  cfg = g1d_env_cfg()
+  apply_failure_rule(cfg)
+  assert cfg.terminations["chassis_xy"].params["threshold"] == C.CHASSIS_THRESHOLD
+  cfg.commands["motion"].chassis_failure = 0.25
+  apply_failure_rule(cfg)
+  assert cfg.terminations["chassis_xy"].params["threshold"] == 0.25
 
 
 def test_stiff_chassis_gains_are_the_soft_ones_over_the_loop_time():
