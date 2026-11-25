@@ -146,12 +146,16 @@ def failure_errors(
   ref_pos: torch.Tensor,
   ref_quat: torch.Tensor,
   offset_xz: tuple[float, float],
+  world_upper: bool = False,
 ) -> torch.Tensor:
   """``(..., 3)`` errors of the failure rules: chassis world xy distance, largest
-  upper-body distance to its reference re-anchored at the chassis (xy + yaw),
-  column top (Yaw_Link) height difference. Bodies are ``C.TRACKED_BODIES``."""
+  upper-body distance to its reference re-anchored at the chassis (xy + yaw), or
+  in the world frame with ``world_upper``, column top (Yaw_Link) height
+  difference. Bodies are ``C.TRACKED_BODIES``."""
   chassis = (ref_pos[..., 0, :2] - root_pos[..., :2]).norm(dim=-1)
-  tgt_pos = _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
+  tgt_pos = (
+    ref_pos if world_upper else _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
+  )
   upper = (tgt_pos[..., 1:, :] - body_pos[..., 1:, :]).norm(dim=-1).amax(-1)
   t = C.TRACKED_BODIES.index("torso_link")
   column = (
@@ -670,6 +674,10 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   """Score every tracked body against its reference in the world frame, as ScaleBFM
   does, instead of re-anchoring the bodies at the robot's chassis; the two chassis
   terms go (``apply_reward_rule``). The world model's reward follows."""
+  world_failure: bool = False
+  """The upper-body failure rule measures each body against its reference in the
+  world frame instead of re-anchored at the robot's chassis; the world model's
+  imagined termination follows. The thresholds stay the terminations' own."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -957,6 +965,7 @@ def _step_terms(env: ManagerBasedRlEnv) -> dict[str, torch.Tensor]:
     cmd.joint_pos,
     offset,
     cmd.cfg.world_reward,
+    cmd.cfg.world_failure,
   )
   env.__dict__["_g1d_step_terms"] = (key, terms)
   return terms
@@ -975,6 +984,7 @@ def _terms_from(
   ref_joint_pos: torch.Tensor,
   offset: tuple[float, float],
   world_reward: bool = False,
+  world_failure: bool = False,
 ) -> dict[str, torch.Tensor]:
   """``_step_terms`` from the post-step state and the reference."""
   root_pos, root_quat, qj, lin, ang, vj = _split_state(state)
@@ -995,7 +1005,7 @@ def _terms_from(
   lo, hi = state_limits.unbind(-1)
   terms["joint_limit"] = ((lo - qj).clamp(min=0) + (qj - hi).clamp(min=0)).sum(-1)
   terms["failure"] = failure_errors(
-    root_pos, pos, quat, root_quat, ref_pos, ref_quat, offset
+    root_pos, pos, quat, root_quat, ref_pos, ref_quat, offset, world_failure
   )
   tgt_pos = _reanchored_pos(ref_pos, ref_quat, root_pos, root_quat)
   terms["upper_err"] = (tgt_pos[:, 1:] - pos[:, 1:]).norm(dim=-1).mean(-1)

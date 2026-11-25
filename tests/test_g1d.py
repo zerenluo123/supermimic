@@ -141,6 +141,9 @@ def test_failure_errors_on_reference_are_zero():
   pos3, quat3, _, _ = fk(moved, root_quat, joints, zero, zero, joints)
   err = failure_errors(moved, pos3, quat3, root_quat, pos, quat, offset)
   torch.testing.assert_close(err, torch.tensor([[0.2, 0.0, 0.0]]), atol=1e-5, rtol=0)
+  # In the world frame the upper bodies moved with it.
+  err = failure_errors(moved, pos3, quat3, root_quat, pos, quat, offset, True)
+  torch.testing.assert_close(err, torch.tensor([[0.2, 0.2, 0.0]]), atol=1e-5, rtol=0)
 
 
 def test_world_reward_scores_the_chassis_offset():

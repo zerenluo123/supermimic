@@ -34,11 +34,13 @@ MAX_STEP_REWARD = 0.1  # dt * the positive tracking weights
 
 @dataclass(frozen=True)
 class Ruler:
-  """Failure thresholds (m) of ``FAILURE_RULES``; 0 leaves a rule out."""
+  """Failure thresholds (m) of ``FAILURE_RULES``; 0 leaves a rule out.
+  ``world_upper``: the upper-body rule in the world frame (``world_failure``)."""
 
   chassis_xy: float = C.CHASSIS_THRESHOLD
   upper_body: float = C.UPPER_THRESHOLD
   column: float = C.COLUMN_THRESHOLD
+  world_upper: bool = False
 
   def thresholds(self) -> tuple[float, float, float]:
     return self.chassis_xy, self.upper_body, self.column
@@ -50,6 +52,10 @@ RULERS = {
   "train": Ruler(),
   "public": Ruler(chassis_xy=0.5),
   "public_nocol": Ruler(chassis_xy=0.5, column=0.0),
+  # World-frame rules (ScaleBFM measures every body in the world frame): the upper
+  # body in the world frame, with the training chassis rule or 0.25 m for it.
+  "ruler1": Ruler(world_upper=True),
+  "ruler2": Ruler(chassis_xy=0.25, world_upper=True),
 }
 
 
@@ -90,6 +96,7 @@ def make_benchmark_env(
   cfg.events = {}
   cfg.commands["motion"].motion_file = motion_file
   cfg.actions["joint_pos"].stiff_chassis = (plant or {}).get("chassis") == "stiff"
+  cfg.commands["motion"].world_failure = ruler.world_upper
   for rule, threshold in zip(FAILURE_RULES, ruler.thresholds(), strict=True):
     if threshold > 0:
       cfg.terminations[rule].params["threshold"] = threshold

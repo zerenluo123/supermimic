@@ -131,13 +131,17 @@ class G1DRepresentation(GenCoordRepresentation):
     self.planar_chassis = planar_chassis
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
     self.critic_extra_dim = 1 + ((NUM_GOAL_FRAMES + 1) * urr_width if critic_urr else 0)
-    # The env's reward rule (its motion command's ``world_reward``), set by bind.
+    # The env's reward and failure rules (its motion command's ``world_reward`` and
+    # ``world_failure``), set by bind.
     self.world_reward = False
+    self.world_failure = False
 
   def bind(self, env: ManagerBasedRlEnv, sim_context: SimContext) -> None:
     super().bind(env, sim_context)
     robot = env.scene["robot"]
-    self.world_reward = env.command_manager.get_term("motion").cfg.world_reward
+    motion_cfg = env.command_manager.get_term("motion").cfg
+    self.world_reward = motion_cfg.world_reward
+    self.world_failure = motion_cfg.world_failure
     self._soft_joint_pos_limits = state_soft_limits(robot)
     jm = G1DJointMap(robot.joint_names)
     self._lift_cols, self._upper_cols = jm.lift, jm.upper
@@ -497,6 +501,7 @@ class G1DRepresentation(GenCoordRepresentation):
       ref_body_pos_w,
       ref_body_quat_w,
       self._torso_offset,
+      self.world_failure,
     )
     return (errors / self._failure_thresholds).amax(-1)
 
