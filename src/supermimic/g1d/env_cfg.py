@@ -25,7 +25,7 @@ import json
 import math
 import os
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 import numpy as np
@@ -47,6 +47,7 @@ from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.lab_api.math import (
   matrix_from_quat,
+  quat_apply,
   quat_apply_inverse,
   quat_mul,
   sample_uniform,
@@ -540,6 +541,9 @@ class G1DMotionCommand(MotionCommand):
   forced_frames: torch.Tensor | None = None
   """Per-env reset frames overriding the sampling mode (the benchmark plays each
   clip from its first frame)."""
+  mode: torch.Tensor
+  """Each env's mode, ``(num_envs, len(C.GOAL_PARTS))``: 1 for each part of the
+  actor's goal it is given, 0 for each withheld (``set_goal_modes``)."""
 
   def __init__(self, cfg: G1DMotionCommandCfg, env: ManagerBasedRlEnv):
     with _g1d_motion_loading(
@@ -553,6 +557,32 @@ class G1DMotionCommand(MotionCommand):
       set_bin_count(self, self.bin_count * world)
     if float(env.scene.env_origins.abs().max()) != 0.0:
       raise ValueError("the G1-D runs with every env origin at 0 (env_spacing=0)")
+    self.mode = torch.ones(self.num_envs, len(C.GOAL_PARTS), device=self.device)
+    self.set_goal_modes(cfg.goal_modes)
+
+  def set_goal_modes(self, modes: dict[str, float]) -> None:
+    """Draw each env's ``mode`` at its resets from ``modes``, a probability per
+    ``C.GOAL_MODES`` name, as ScaleBFM draws from its ``mode_candidates``; empty:
+    every part, always."""
+    unknown = set(modes) - set(C.GOAL_MODES)
+    if unknown:
+      raise ValueError(f"goal modes are {sorted(C.GOAL_MODES)}, not {sorted(unknown)}")
+    if modes and (min(modes.values()) <= 0 or abs(sum(modes.values()) - 1) > 1e-6):
+      raise ValueError(
+        f"goal mode probabilities must be positive and sum to 1: {modes}"
+      )
+    self._mode_table = torch.tensor(
+      [[part in C.GOAL_MODES[name] for part in C.GOAL_PARTS] for name in modes],
+      dtype=torch.float,
+      device=self.device,
+    )
+    self._mode_probs = torch.tensor(list(modes.values()), device=self.device)
+
+  def _draw_modes(self, env_ids: torch.Tensor) -> None:
+    """Each of ``env_ids`` draws the mode of the episode it starts."""
+    if self._mode_probs.numel() and len(env_ids):
+      drawn = torch.multinomial(self._mode_probs, len(env_ids), replacement=True)
+      self.mode[env_ids] = self._mode_table[drawn]
 
   @property
   def robot_joint_pos(self) -> torch.Tensor:
@@ -580,6 +610,7 @@ class G1DMotionCommand(MotionCommand):
     self.set_time_steps(env_ids, frames)
 
     n = len(env_ids)
+    self._draw_modes(env_ids)
 
     def u(ranges: dict[str, tuple[float, float]], key: str) -> torch.Tensor:
       lo, hi = ranges.get(key, (0.0, 0.0))
@@ -710,6 +741,11 @@ class G1DMotionCommandCfg(MotionCommandCfg):
   """Set with the failure rules (``set_failure_rule``): the upper-body rule
   measures each body against its reference in the world frame instead of
   re-anchored at the robot's chassis."""
+  goal_modes: dict[str, float] = field(default_factory=dict)
+  """ScaleBFM's modes: at every reset each env draws one of these
+  (``C.GOAL_MODES``) with its probability and keeps it for the episode, the parts
+  of the actor's goal it is given (``G1DMotionCommand.mode``). Empty: every part,
+  always. Set from the runner's ``g1d_goal_modes``."""
 
   def build(self, env: ManagerBasedRlEnv) -> G1DMotionCommand:
     return G1DMotionCommand(self, env)
@@ -869,10 +905,12 @@ JOINT_LIMIT_WEIGHT = -2.0
 # ``world_reward``: the body terms alone, each body against its reference in the
 # world frame (ScaleBFM's rule); the chassis is a tracked body.
 WORLD_TRACKING_TERMS = TRACKING_TERMS[2:]
-# The wrist links, whose world-frame error the benchmark reports.
+# The wrist links, whose world-frame error the benchmark reports, and the palm
+# keypoints on them (``C.URR_OFFSETS``), whose world-frame error it reports too.
 WRIST_ROWS = [
   C.TRACKED_BODIES.index(n) for n in ("left_wrist_yaw_link", "right_wrist_yaw_link")
 ]
+PALM_OFFSETS = C.URR_OFFSETS[1:3]
 
 
 def tracking_errors(
@@ -1044,6 +1082,10 @@ def _terms_from(
   world = (ref_pos - pos).norm(dim=-1)
   terms["upper_world_err"] = world[:, 1:].mean(-1)
   terms["wrist_world_err"] = world[:, WRIST_ROWS].mean(-1)
+  palm = pos.new_tensor(PALM_OFFSETS).expand(pos.shape[0], -1, -1)
+  palm_err = ref_pos[:, WRIST_ROWS] + quat_apply(ref_quat[:, WRIST_ROWS], palm)
+  palm_err = palm_err - pos[:, WRIST_ROWS] - quat_apply(quat[:, WRIST_ROWS], palm)
+  terms["palm_world_err"] = palm_err.norm(dim=-1).mean(-1)
   terms["joint_err"] = (qj[:, 1:] - ref_joint_pos[:, 1:]).abs().mean(-1)
   terms["column_err"] = (qj[:, 0] - ref_joint_pos[:, 0]).abs()
   return terms

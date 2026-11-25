@@ -84,6 +84,15 @@ URR_NUM_ORIENTED = 3
 URR_POSE_DIM = 3 * len(URR_BODIES) + 6 * URR_NUM_ORIENTED  # positions, rot6d: 33
 URR_VEL_DIM = 3 * len(URR_BODIES) + 3 * URR_NUM_ORIENTED  # linear, angular: 24
 
+# The parts of a robot-frame actor goal in its order: the chassis, then the URR
+# keypoints by their bodies (the body point, the palms, the elbows). ScaleBFM's
+# modes (its ``mode_candidates``) each give the actor some of them.
+GOAL_PARTS = ("chassis", *URR_BODIES)
+GOAL_MODES = {
+  "full": GOAL_PARTS,
+  "three_point": ("torso_link", "left_wrist_yaw_link", "right_wrist_yaw_link"),
+}
+
 # Chassis and column commands are MAX * tanh(a), the same in the simulator and in
 # imagination: a hard clip lets the policy push the raw action far past it.
 VX_MAX, WZ_MAX, VZ_MAX = 1.5, 0.6, 0.0765

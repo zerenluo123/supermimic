@@ -130,6 +130,8 @@ def main() -> None:
     apply_g1d_defaults(args.runner, remaining_args)
     apply_reward_rule(args.env)
     apply_failure_rule(args.env)
+    # The env draws each episode's mode; the actor trains on it.
+    args.env.commands["motion"].goal_modes = dict(args.runner.g1d_goal_modes)
 
   args.env.commands["motion"].sampling_mode = (
     "external" if args.runner.sampling_mode == "return" else args.runner.sampling_mode

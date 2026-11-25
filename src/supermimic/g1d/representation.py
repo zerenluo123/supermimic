@@ -17,7 +17,9 @@ The G1-D adds:
   in the robot frame, the odometry noise on the robot's own pose;
 * optionally the URR keypoints (``urr.py``) in place of the reference joints in
   the actor's goal (``actor_goal="urr"``), and the window's and the robot's own
-  keypoints as critic inputs (``critic_urr``).
+  keypoints as critic inputs (``critic_urr``);
+* optionally ScaleBFM's modes (``goal_modes``): the robot-frame goal's parts
+  (``actor_goal_parts``), of which each episode's mode gives the actor some.
 """
 
 from __future__ import annotations
@@ -79,7 +81,7 @@ if TYPE_CHECKING:
 ACTOR_GOALS = ("joints", "urr", "urr_robot", "urr_robot_rel")
 ROBOT_FRAME_GOALS = ("urr_robot", "urr_robot_rel")
 """Actor goals of ScaleBFM's form, every part in the robot's own chassis frame."""
-ROBOT_FRAME_PARTS = 1 + len(C.URR_BODIES)  # the chassis, then the URR keypoints
+ROBOT_FRAME_PARTS = len(C.GOAL_PARTS)  # the chassis, then the URR keypoints
 ROBOT_FRAME_DIM = {"urr_robot": 3 + 6, "urr_robot_rel": 2 * (3 + 6)}
 """Per part and window frame: ``[pos, rot6d]``, with ``"urr_robot_rel"`` then
 ``[pos, pos_rel, rot6d, rot_rel6d]``."""
@@ -107,6 +109,7 @@ class G1DRepresentation(GenCoordRepresentation):
     urr_table: bool = True,
     planar_chassis: bool = False,
     urr_body_point: str = "chest",
+    goal_modes: bool = False,
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
     (``"joints"``), the reference URR keypoint pose in that frame's reference
@@ -122,12 +125,16 @@ class G1DRepresentation(GenCoordRepresentation):
     same values). ``planar_chassis``: the world model moves the chassis only in
     the plane, as the plant does (``apply_prediction``). ``urr_body_point``: the
     body keypoint at the ``chest`` or at the ``waist`` (``URR_BODY_OFFSETS``), for
-    the actor's goal and the critic's keypoints alike."""
+    the actor's goal and the critic's keypoints alike. ``goal_modes``: the actor
+    trains on ScaleBFM's modes, so its robot-frame goal comes in parts
+    (``actor_goal_parts``) that each episode's mode gives or withholds."""
     super().__init__(C.NJ, torch.tensor(default_state_q(), device=device))
     if actor_goal not in ACTOR_GOALS:
       raise ValueError(f"actor_goal is one of {ACTOR_GOALS}, not {actor_goal!r}")
     if actor_goal in ROBOT_FRAME_GOALS and not chassis_window:
       raise ValueError(f"actor_goal {actor_goal!r} needs chassis_window")
+    if goal_modes and actor_goal not in ROBOT_FRAME_GOALS:
+      raise ValueError(f"goal_modes need a robot-frame actor_goal {ROBOT_FRAME_GOALS}")
     self._encoder_bias: tuple[slice, SimContext] | None = None
     self.actor_goal = actor_goal
     self.critic_urr = critic_urr
@@ -135,6 +142,7 @@ class G1DRepresentation(GenCoordRepresentation):
     self.urr_table = urr_table
     self.planar_chassis = planar_chassis
     self.urr_offsets = urr_offsets(urr_body_point)
+    self.goal_modes = goal_modes
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
     self.critic_extra_dim = 1 + ((NUM_GOAL_FRAMES + 1) * urr_width if critic_urr else 0)
     # The env's reward and failure rules (its motion command's ``world_reward`` and
@@ -257,6 +265,16 @@ class G1DRepresentation(GenCoordRepresentation):
     else:
       content = NUM_GOAL_FRAMES * C.URR_POSE_DIM
     return content + (rel if self.chassis_window else 3 + GOAL_REL_ORI_DIM)
+
+  def actor_goal_parts(self) -> torch.Tensor | None:
+    """With ``goal_modes``, the part (``C.GOAL_PARTS``) of each actor goal dim: the
+    robot-frame goal is the window's frames, each its parts in turn."""
+    if not self.goal_modes:
+      return None
+    width = ROBOT_FRAME_DIM[self.actor_goal]
+    return (
+      torch.arange(ROBOT_FRAME_PARTS).repeat_interleave(width).repeat(NUM_GOAL_FRAMES)
+    )
 
   def compute_wm_goal(
     self,

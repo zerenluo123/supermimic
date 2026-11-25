@@ -1,8 +1,9 @@
 """Benchmark every kept checkpoint of a G1-D run (``--runner.keep-checkpoints``).
 
-Builds one benchmark env per ruler and reuses it; writes
-``<run>/eval_<tag>_<ruler>.csv`` (one row per checkpoint) and
-``checkpoints/<step>/eval_<tag>_<ruler>.json`` (summary + per-clip results).
+Builds one benchmark env per ruler and reuses it for every goal mode; writes
+``<run>/eval_<tag>_<ruler><mode>.csv`` (one row per checkpoint) and
+``checkpoints/<step>/eval_<tag>_<ruler><mode>.json`` (summary + per-clip results),
+where ``<mode>`` is empty for the full goal and ``_<mode>`` for another mode.
 Evaluated checkpoints are skipped, so it can be re-run or left watching.
 
   uv run src/supermimic/scripts/eval_g1d.py --run-dir logs/.../<time> \\
@@ -32,6 +33,7 @@ COLS = (
   "joint_err_mean",
   "upper_world_err_mean_cm",
   "wrist_world_err_mean_cm",
+  "palm_world_err_mean_cm",
   "fail_rules",
   "failed",
 )
@@ -42,6 +44,7 @@ def main(
   motion_file: str,
   tag: str,
   rulers: tuple[str, ...] = ("soft",),
+  modes: tuple[str, ...] = (),
   device: str = "cuda:0",
   num_envs: int = 1024,
   watch: bool = False,
@@ -52,6 +55,8 @@ def main(
   """``--rulers``: the default training rule (``soft``) by default, ``strict`` the
   other one; ``public`` / ``public_nocol`` (the 0.5 m chassis rule of the old
   Reproduced reports) only for those comparisons.
+  ``--modes``: the goal modes to score (``C.GOAL_MODES``); by default those the run
+  trained on (``--runner.g1d-goal-modes``), or the full goal.
   ``--steps``: only these checkpoints (directory names, e.g. ``00060000``).
   ``--stop-file``: with ``--watch``, stop once this file exists (training wrote it
   when it finished) and every checkpoint is evaluated."""
@@ -83,18 +88,30 @@ def main(
   if first is None:
     raise SystemExit(f"{run_dir}: no checkpoint with run.json yet")
   plant = checkpoint_plant(first.parent)
+  if not modes:
+    trained = json.loads(first.read_text())["runner_cfg"].get("g1d_goal_modes")
+    modes = tuple(trained or ("full",))
   envs = {
     name: make_benchmark_env(
       motion_file, RULERS[name], min(num_envs, num_clips), device, plant
     )
     for name in rulers
   }
-  csvs = {name: run_dir / f"eval_{tag}_{name}.csv" for name in rulers}
-  done: dict[str, set[str]] = {}
-  for name, csv in csvs.items():
+  # One csv per ruler and mode, the full goal's under the ruler's name alone.
+  runs = {
+    (name, mode): f"{tag}_{name}" + ("" if mode == "full" else f"_{mode}")
+    for name in rulers
+    for mode in modes
+  }
+  csvs = {key: run_dir / f"eval_{stem}.csv" for key, stem in runs.items()}
+  done: dict[tuple[str, str], set[str]] = {}
+  for key, csv in csvs.items():
     if not csv.exists():
       csv.write_text(",".join(COLS) + "\n")
-    done[name] = {line.split(",")[0] for line in csv.read_text().splitlines()[1:]}
+    lines = csv.read_text().splitlines()
+    if lines[0] != ",".join(COLS):
+      raise SystemExit(f"{csv}: written with other columns; evaluate under a new --tag")
+    done[key] = {line.split(",")[0] for line in lines[1:]}
   while True:
     # Snapshot before scanning: if training finishes during this pass, scan once
     # more so its final checkpoint cannot be missed.
@@ -108,13 +125,13 @@ def main(
     if steps:
       ckpts = [c for c in ckpts if c.name in steps]
     for ckpt in ckpts:
-      for name in rulers:
-        if ckpt.name in done[name]:
+      for (name, mode), stem in runs.items():
+        if ckpt.name in done[name, mode]:
           continue
         t0 = time.time()
         env = envs[name]
         actor, rep, history = load_actor(ckpt, env, device)
-        clips, pooled = run_benchmark(actor, rep, history, env)
+        clips, pooled = run_benchmark(actor, rep, history, env, mode)
         s = summarize(clips, pooled)
         row = [
           ckpt.name,
@@ -130,20 +147,22 @@ def main(
           f"{s['joint_err_mean']:.4f}",
           f"{100 * s['upper_world_err_mean']:.2f}",
           f"{100 * s['wrist_world_err_mean']:.2f}",
+          f"{100 * s['palm_world_err_mean']:.2f}",
           " ".join(f"{k}:{v}" for k, v in s["fail_rule_counts"].items() if v),
           "|".join(s["failed_clips"]),
         ]
-        with open(csvs[name], "a") as f:
+        with open(csvs[name, mode], "a") as f:
           f.write(",".join(str(x) for x in row) + "\n")
         out = {"summary": s, "clips": [asdict(c) for c in clips]}
-        (ckpt / f"eval_{tag}_{name}.json").write_text(json.dumps(out, indent=1))
+        (ckpt / f"eval_{stem}.json").write_text(json.dumps(out, indent=1))
         print(
-          f"[eval] {ckpt.name} {tag}/{name}: return {s['mean_norm_return']:.4f}, "
+          f"[eval] {ckpt.name} {tag}/{name}{'' if mode == 'full' else '/' + mode}: "
+          f"return {s['mean_norm_return']:.4f}, "
           f"failed {s['failed']}/{s['clips']}, column {100 * s['col_err_mean']:.2f} cm "
           f"({time.time() - t0:.0f} s)",
           flush=True,
         )
-        done[name].add(ckpt.name)
+        done[name, mode].add(ckpt.name)
         del actor
         torch.cuda.empty_cache()
     if not watch or stopping:

@@ -67,6 +67,7 @@ def create_representation(
   g1d_urr_table: bool = True,
   g1d_planar_chassis: bool = False,
   g1d_urr_body_point: str = "chest",
+  g1d_goal_modes: bool = False,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
   if name != "g1d" and (
@@ -75,10 +76,11 @@ def create_representation(
     or g1d_chassis_window
     or g1d_planar_chassis
     or g1d_urr_body_point != "chest"
+    or g1d_goal_modes
   ):
     raise ValueError(
       "g1d_actor_goal / g1d_critic_urr / g1d_chassis_window / g1d_planar_chassis "
-      "/ g1d_urr_body_point apply to the g1d representation"
+      "/ g1d_urr_body_point / g1d_goal_modes apply to the g1d representation"
     )
   if name == "gencoord":
     num_joints = infer_num_joints_from_state_dim(full_state_dim)
@@ -100,6 +102,7 @@ def create_representation(
       urr_table=g1d_urr_table,
       planar_chassis=g1d_planar_chassis,
       urr_body_point=g1d_urr_body_point,
+      goal_modes=g1d_goal_modes,
     )
     if full_state_dim != rep.full_state_dim:
       raise ValueError(
@@ -377,6 +380,11 @@ class StateRepresentation(nn.Module, ABC):
   def actor_goal_dim(self, num_goals: int) -> int:
     """Width of the actor's goal, :func:`actor_goal_dim` unless overridden."""
     return actor_goal_dim(num_goals)
+
+  def actor_goal_parts(self) -> torch.Tensor | None:
+    """The part of each actor goal dim when the actor trains on modes that withhold
+    some parts (``TaskSpec.goal_parts``); ``None``: the goal is one whole."""
+    return None
 
   def add_proprio_noise(self, obs: torch.Tensor) -> torch.Tensor:
     """Add per-dim uniform proprio jitter — the single noise site shared by the

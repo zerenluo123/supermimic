@@ -27,7 +27,10 @@ class WorldModelEnv:
 
   Observations hold the sensor ``history`` (B, history_length, sensor_dim), the
   privileged ``critic`` input and one ``goal_<name>`` per task. ``task_specs[0]``
-  is the motion task, whose goal is the actor half of the motion target.
+  is the motion task, whose goal is the actor half of the motion target. A motion
+  goal in parts (``TaskSpec.goal_parts``) keeps each start's ``mode`` for the
+  rollout, as the episode it was collected in did: the actor reads it
+  (``mode_motion``) and so does the critic.
   """
 
   def __init__(
@@ -44,6 +47,7 @@ class WorldModelEnv:
     self.representation = representation
     self.task_specs = task_specs
     self.history_length = history_length
+    self._goal_modes = task_specs[0].goal_parts is not None
 
     # Analytic per-step reward ceiling: positive tracking-reward weights, dt-scaled.
     self.max_step_reward = env.unwrapped.step_dt * sum(
@@ -81,6 +85,8 @@ class WorldModelEnv:
     self.last_actions = batch["prev_action"].detach()
     self.sim_ctx = batch["sim_ctx"]
     self.motion_times = batch["motion_time"]
+    if self._goal_modes:
+      self.mode = batch["mode"].float()
     self._update_goal()
     if self.history_length > 1:
       self._past_sensors = self._warmstart_past_sensors(batch)
@@ -143,7 +149,13 @@ class WorldModelEnv:
       critic.append(
         self.representation.critic_extra(self.rep_state, self.motion, self.motion_times)
       )
-    return build_actor_obs_td(self._task_goal_obs, history, torch.cat(critic, dim=-1))
+    modes = None
+    if self._goal_modes:
+      critic.append(self.mode)
+      modes = {"motion": self.mode}
+    return build_actor_obs_td(
+      self._task_goal_obs, history, torch.cat(critic, dim=-1), modes
+    )
 
   def _compute_term_prob(
     self,

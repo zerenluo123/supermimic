@@ -66,19 +66,26 @@ class TaskSpec:
   precompute_replay_goal: PrecomputeReplayGoal | None = None
   """Optional noise-free per-frame command table for ONNX-export sanity
   checks and viewer replay mode. Returns shape ``(num_frames, raw_goal_dim)``."""
+  goal_parts: torch.Tensor | None = field(default=None, compare=False)
+  """The part of each goal dim, ``(goal_dim,)``, when the actor trains on modes that
+  give it only some parts (ScaleBFM's): the encoder reads the normalized goal times
+  each dim's part bit of the obs' ``mode_<name>``, then the bits."""
 
 
 def build_actor_obs_td(
   goals_by_name: dict[str, torch.Tensor],
   history: torch.Tensor,
   critic: torch.Tensor | None = None,
+  modes_by_name: dict[str, torch.Tensor] | None = None,
 ) -> TensorDict:
   """``history`` (B, H, obs_dim) (+ optional ``critic``) plus one ``goal_<name>``
-  key per task. The newest frame ``history[:, -1]`` is the current obs."""
+  key per task, and a ``mode_<name>`` (B, parts) for each task given one
+  (``TaskSpec.goal_parts``). The newest frame ``history[:, -1]`` is the current obs."""
   obs: dict[str, torch.Tensor] = {"history": history}
   if critic is not None:
     obs["critic"] = critic
   obs.update({f"goal_{name}": goal for name, goal in goals_by_name.items()})
+  obs.update({f"mode_{name}": mode for name, mode in (modes_by_name or {}).items()})
   return TensorDict(obs, batch_size=[history.shape[0]], device=history.device)
 
 
@@ -95,6 +102,7 @@ def make_motion_task(representation: "StateRepresentation", num_goals: int) -> T
     name="motion",
     goal_dim=representation.actor_goal_dim(num_goals),
     extract_training_goal=extract,
+    goal_parts=representation.actor_goal_parts(),
   )
 
 

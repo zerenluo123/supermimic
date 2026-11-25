@@ -89,6 +89,13 @@ class SuperMimicRunnerCfg:
   ``chest``, 0.2 m above the torso_link origin along its z (the g1d-urr
   controller's), or the ``waist``, the torso_link origin itself (the waist yaw
   joint), as ScaleBFM places its points at link origins."""
+  g1d_goal_modes: dict[str, float] = field(default_factory=dict)
+  """G1-D: train the actor on ScaleBFM's modes, e.g.
+  ``"{'full': 0.6, 'three_point': 0.4}"``: at every reset each env draws one
+  (``C.GOAL_MODES``) with its probability and keeps it for the episode; imagined
+  rollouts keep their start's. The actor's normalized goal has the mode's withheld
+  parts zeroed, and the actor and the critic read the mode's bit per part. Needs a
+  robot-frame ``g1d_actor_goal``. Empty: the whole goal, no mode."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False
@@ -187,6 +194,7 @@ def build_world_model(
     g1d_urr_table=cfg.g1d_urr_table,
     g1d_planar_chassis=cfg.g1d_planar_chassis,
     g1d_urr_body_point=cfg.g1d_urr_body_point,
+    g1d_goal_modes=bool(cfg.g1d_goal_modes),
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)
@@ -318,6 +326,16 @@ class SuperMimicRunner:
     self.action_manager = self.env.unwrapped.action_manager
     self.motion_cmd = self.env.unwrapped.command_manager.get_term("motion")
     self.motion = self.motion_cmd.motion
+    # A goal in parts (ScaleBFM's modes): the motion command's per-env ``mode``,
+    # drawn from the modes the actor trains on (train.py resolves them).
+    parts = self._representation.actor_goal_parts()
+    self._num_goal_parts = 0 if parts is None else int(parts.max()) + 1
+    env_modes = getattr(self.motion_cmd.cfg, "goal_modes", {})
+    if dict(env_modes) != dict(self.cfg.g1d_goal_modes):
+      raise RuntimeError(
+        f"the actor trains on goal modes {self.cfg.g1d_goal_modes} but the env "
+        f"draws {env_modes}: set the motion command's goal_modes to match"
+      )
 
     self.replay_buffer = ReplayBuffer(
       schema=self._buffer_schema(),
@@ -383,6 +401,8 @@ class SuperMimicRunner:
         self._representation.proprio_obs_dim(self._num_actions)
       )
     schema["sim_ctx"] = FieldSpec(self._sim_context.output_dim)
+    if self._num_goal_parts:
+      schema["mode"] = FieldSpec(self._num_goal_parts, dtype=torch.bool)
     return schema
 
   def _step_and_store(
@@ -490,6 +510,7 @@ class SuperMimicRunner:
       + self._num_goals
       + self._sim_context.output_dim
       + self._representation.critic_extra_dim
+      + self._num_goal_parts
     )
     critic = build_mlp(
       critic_input_dim,
@@ -529,6 +550,7 @@ class SuperMimicRunner:
     sim_actor_obs: torch.Tensor,
     motion_times: torch.Tensor,
     sim_ctx: torch.Tensor,
+    mode: torch.Tensor | None = None,
   ) -> TensorDict:
     proprio = self.cfg.actor_obs == "proprio"
     sensor = self._representation.compute_actor_sensor(
@@ -542,7 +564,8 @@ class SuperMimicRunner:
       ts.name: ts.extract_training_goal(self.motion, motion_times, aux_state, rep_state)
       for ts in self._active_task_specs
     }
-    return build_actor_obs_td(goals, self._collection_history(sensor))
+    modes = None if mode is None else {"motion": mode}
+    return build_actor_obs_td(goals, self._collection_history(sensor), None, modes)
 
   def _configure_reset_sampling(self) -> None:
     self._sampler: ReturnSampler | None = None
@@ -574,14 +597,16 @@ class SuperMimicRunner:
       curr_states = obs["full_state"].to(self.device)
       sim_actor_obs = obs["actor"].to(self.device)
 
-      # Pre-step frames; env.step() advances time_steps in place.
+      # Pre-step frames and modes; env.step() advances time_steps in place and
+      # draws the reset envs' modes.
       motion_times = self.motion_cmd.time_steps.to(self.device).clone()
+      mode = self.motion_cmd.mode.clone() if self._num_goal_parts else None
 
       rep_state = self._representation.represent(curr_states)
       aux_state = self._representation.extract_aux_state(curr_states)
       sim_ctx = self._sim_context.read(self.env.unwrapped)
       actor_td = self._build_sim_obs_td(
-        rep_state, aux_state, sim_actor_obs, motion_times, sim_ctx
+        rep_state, aux_state, sim_actor_obs, motion_times, sim_ctx, mode
       )
 
       actions = self.policy_learner.actor(actor_td)
@@ -593,6 +618,8 @@ class SuperMimicRunner:
       extra_fields = {"sim_ctx": sim_ctx}
       if self._stores_actor_obs:
         extra_fields["actor_obs"] = sim_actor_obs
+      if mode is not None:
+        extra_fields["mode"] = mode.bool()
 
       next_obs, rewards, dones, extras = self._step_and_store(
         actions,

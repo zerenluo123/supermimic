@@ -128,6 +128,13 @@ class MultiEncoderAE(nn.Module):
                                        decoder input
     ``obs_td[f"goal_{task.name}"]``  — full-batch goal per task; only the
                                        task's slot range is read
+    ``obs_td[f"mode_{task.name}"]``  — for a task whose goal comes in parts
+                                       (``TaskSpec.goal_parts``), each row's
+                                       mode: 1 per part given, 0 per part
+                                       withheld; without it every part is given
+
+  A goal in parts is ScaleBFM's masked goal: the encoder reads the normalized goal
+  with each withheld part zeroed, then the mode's bits.
   """
 
   def __init__(
@@ -159,9 +166,21 @@ class MultiEncoderAE(nn.Module):
     self.goal_normalizers = nn.ModuleDict(
       {ts.name: _CudaGraphNormalization(ts.goal_dim) for ts in task_specs}
     )
+    # Tasks whose goal comes in parts: the number of parts, the part of each dim.
+    self._num_goal_parts: dict[str, int] = {}
+    for ts in task_specs:
+      if ts.goal_parts is not None:
+        self._num_goal_parts[ts.name] = int(ts.goal_parts.max()) + 1
+        self.register_buffer(
+          f"_goal_parts_{ts.name}", ts.goal_parts.long(), persistent=False
+        )
     self.encoders = nn.ModuleDict(
       {
-        ts.name: build_mlp(ts.goal_dim, hidden_dims, output_dim=latent_dim)
+        ts.name: build_mlp(
+          ts.goal_dim + self._num_goal_parts.get(ts.name, 0),
+          hidden_dims,
+          output_dim=latent_dim,
+        )
         for ts in task_specs
       }
     )
@@ -197,14 +216,31 @@ class MultiEncoderAE(nn.Module):
       off = hi
     return ranges
 
+  def _encoder_input(
+    self, obs_td: TensorDict, name: str, lo: int, hi: int
+  ) -> torch.Tensor:
+    """Task ``name``'s encoder input for rows ``[lo, hi)``: its normalized goal, or
+    for a goal in parts that goal times each dim's part bit of the mode (zero for
+    a withheld part, as ScaleBFM's network reads it), then the bits."""
+    goal_n = self.goal_normalizers[name](obs_td[f"goal_{name}"][lo:hi])
+    num_parts = self._num_goal_parts.get(name)
+    if num_parts is None:
+      return goal_n
+    mode = obs_td.get(f"mode_{name}", None)
+    if mode is None:
+      mode = goal_n.new_ones(hi - lo, num_parts)
+    else:
+      mode = mode[lo:hi].to(goal_n.dtype)
+    parts = getattr(self, f"_goal_parts_{name}")
+    return torch.cat([goal_n * mode[:, parts], mode], dim=-1)
+
   def forward(self, obs_td: TensorDict) -> torch.Tensor:
     slots = self.slot_ranges(obs_td.shape[0])
     enc_outs: list[torch.Tensor] = []
     for name, (lo, hi) in zip(self._task_names, slots, strict=True):
       if lo == hi:
         continue
-      goal_n = self.goal_normalizers[name](obs_td[f"goal_{name}"][lo:hi])
-      enc_outs.append(self.encoders[name](goal_n))
+      enc_outs.append(self.encoders[name](self._encoder_input(obs_td, name, lo, hi)))
 
     self._aux_loss = self._compute_aux_loss(obs_td, slots)
 
@@ -229,11 +265,11 @@ class MultiEncoderAE(nn.Module):
     if not self.training or self.latent_bc_weight == 0.0:
       return out
     anchor = self._anchor
-    anchor_goal_d = self.goal_normalizers[anchor](obs_td[f"goal_{anchor}"]).detach()
+    anchor_goal_d = self._encoder_input(obs_td, anchor, 0, obs_td.shape[0]).detach()
     for name, (lo, hi) in zip(self._task_names, slots, strict=True):
       if name == anchor or lo == hi:
         continue
-      goal_n_d = self.goal_normalizers[name](obs_td[f"goal_{name}"][lo:hi]).detach()
+      goal_n_d = self._encoder_input(obs_td, name, lo, hi).detach()
       z = torch.tanh(self.encoders[name](goal_n_d))
       with torch.no_grad():
         z_anchor = torch.tanh(self.encoders[anchor](anchor_goal_d[lo:hi]))

@@ -1,14 +1,15 @@
 """Tracking benchmark of the G1-D, the protocol of SuperMimic-Reproduced (g1d).
 
 Every clip is played once from its first frame with the deterministic policy: no
-action, proprio, goal or reset noise and no domain randomization. A clip *fails*
-when a failure rule of the ruler fires (``RULERS``: the training rules, or the old
-Reproduced ones) and stops there. Normalized return = summed step reward / (0.1 *
+action, proprio, goal or reset noise and no domain randomization; an actor trained
+on goal modes is given the parts of one (``C.GOAL_MODES``; the full goal by
+default). A clip *fails* when a failure rule of the ruler fires (``RULERS``: the
+training rules, or the old Reproduced ones) and stops there. Normalized return = summed step reward / (0.1 *
 steps played), also over the whole clip (``return_full_clip``). Also reported:
 which rule ended each failed clip and the tracking precision over the steps
 played (column height error, chassis world xy distance, mean upper-body distance
 to the re-anchored reference and to the reference itself in the world frame, mean
-wrist world distance, mean upper-joint error).
+wrist and palm world distance, mean upper-joint error).
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ class ClipResult:
   upper_err_mean: float = 0.0
   upper_world_err_mean: float = 0.0
   wrist_world_err_mean: float = 0.0
+  palm_world_err_mean: float = 0.0
   joint_err_mean: float = 0.0
 
 
@@ -118,6 +120,7 @@ def load_actor(
     g1d_chassis_window=cfg.g1d_chassis_window,
     g1d_urr_table=cfg.g1d_urr_table,
     g1d_urr_body_point=cfg.g1d_urr_body_point,
+    g1d_goal_modes=bool(cfg.g1d_goal_modes),
   )
   rep.actor_goal_noise = False
   wm = WorldModel(rep, None, None, num_goals, env.action_manager.total_action_dim)  # type: ignore[arg-type]
@@ -129,10 +132,17 @@ def load_actor(
 
 @torch.no_grad()
 def run_benchmark(
-  actor: MultiEncoderAE, rep, history_length: int, env: ManagerBasedRlEnv
+  actor: MultiEncoderAE,
+  rep,
+  history_length: int,
+  env: ManagerBasedRlEnv,
+  goal_mode: str = "full",
 ) -> tuple[list[ClipResult], dict]:
+  """``goal_mode``: the parts of its goal the actor is given (``C.GOAL_MODES``), for
+  an actor trained on modes; an actor trained on the whole goal reads them all."""
   device = env.device
   cmd: G1DMotionCommand = env.command_manager.get_term("motion")  # type: ignore[assignment]
+  cmd.set_goal_modes({goal_mode: 1.0})  # every env's at its first reset below
   motion = cmd.motion
   ends = motion.motion_ends
   starts = torch.cat([ends.new_zeros(1), ends[:-1]])
@@ -148,7 +158,7 @@ def run_benchmark(
     return torch.zeros(num_envs, device=device)
 
   ret, col, xy, up, joint = zeros(), zeros(), zeros(), zeros(), zeros()
-  up_world, wrist_world = zeros(), zeros()
+  up_world, wrist_world, palm_world = zeros(), zeros(), zeros()
   steps = torch.zeros(num_envs, dtype=torch.long, device=device)
   pooled_col: list[torch.Tensor] = []
   results: dict[int, ClipResult] = {}
@@ -163,7 +173,9 @@ def run_benchmark(
     _, goal = rep.compute_wm_goal(
       motion, cmd.time_steps, aux, rep.represent(obs["full_state"])
     )
-    action = actor(build_actor_obs_td({"motion": goal}, hist))
+    action = actor(
+      build_actor_obs_td({"motion": goal}, hist, None, {"motion": cmd.mode})
+    )
     obs, reward, terminated, truncated, _ = env.step(action)
     terms = env.__dict__["_g1d_step_terms"][1]
     steps += 1
@@ -173,6 +185,7 @@ def run_benchmark(
     up += terms["upper_err"]
     up_world += terms["upper_world_err"]
     wrist_world += terms["wrist_world_err"]
+    palm_world += terms["palm_world_err"]
     joint += terms["joint_err"]
     pooled_col.append(terms["column_err"][active])
     done = (terminated | truncated) & active
@@ -200,6 +213,7 @@ def run_benchmark(
         upper_err_mean=float(up[e]) / st,
         upper_world_err_mean=float(up_world[e]) / st,
         wrist_world_err_mean=float(wrist_world[e]) / st,
+        palm_world_err_mean=float(palm_world[e]) / st,
         joint_err_mean=float(joint[e]) / st,
       )
     reset = terminated | truncated
@@ -209,7 +223,7 @@ def run_benchmark(
       nxt[ids] += num_envs
       active = current < n_clips
       cmd.forced_frames[ids] = starts[nxt[ids].clamp(max=n_clips - 1)]
-      for t in (ret, col, xy, up, up_world, wrist_world, joint):
+      for t in (ret, col, xy, up, up_world, wrist_world, palm_world, joint):
         t[ids] = 0.0
       steps[ids] = 0
     hist = torch.cat([hist[:, 1:], obs["actor"].unsqueeze(1)], dim=1)
@@ -243,6 +257,7 @@ def summarize(clips: list[ClipResult], pooled: dict) -> dict:
     "upper_err_mean": weighted("upper_err_mean"),
     "upper_world_err_mean": weighted("upper_world_err_mean"),
     "wrist_world_err_mean": weighted("wrist_world_err_mean"),
+    "palm_world_err_mean": weighted("palm_world_err_mean"),
     "joint_err_mean": weighted("joint_err_mean"),
     "failed_clips": [c.name for c in clips if c.failed],
     **pooled,
