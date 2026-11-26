@@ -51,6 +51,22 @@ def test_missing_fields_warn_with_dotted_paths(capsys):
   assert "tasks.velocity.window_frames" in out
 
 
+def test_missing_changed_default_takes_the_value_trained_with(capsys):
+  """G1-D runs saved before the body point could move trained it at the chest;
+  the other representations have no body point and take today's default."""
+  assert SuperMimicRunnerCfg().g1d_urr_body_point == "waist"
+  raw = _serialized(SuperMimicRunnerCfg(representation="g1d"))
+  del raw["g1d_urr_body_point"]
+  assert load_runner_cfg({"runner_cfg": raw}).g1d_urr_body_point == "chest"
+  assert "'g1d_urr_body_point': 'chest'" in capsys.readouterr().out
+  # Saved, it is kept.
+  raw = _serialized(SuperMimicRunnerCfg(representation="g1d"))
+  assert load_runner_cfg({"runner_cfg": raw}).g1d_urr_body_point == "waist"
+  raw = _serialized(SuperMimicRunnerCfg())
+  del raw["g1d_urr_body_point"]
+  assert load_runner_cfg({"runner_cfg": raw}) == SuperMimicRunnerCfg()
+
+
 def test_missing_runner_cfg_raises():
   with pytest.raises(ValueError, match="runner_cfg"):
     load_runner_cfg({})

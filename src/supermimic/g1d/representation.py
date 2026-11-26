@@ -108,7 +108,7 @@ class G1DRepresentation(GenCoordRepresentation):
     chassis_window: bool = False,
     urr_table: bool = True,
     planar_chassis: bool = False,
-    urr_body_point: str = "chest",
+    urr_body_point: str = "waist",
     goal_modes: bool = False,
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
@@ -124,7 +124,7 @@ class G1DRepresentation(GenCoordRepresentation):
     without it they are computed from the reference on each use (no table, the
     same values). ``planar_chassis``: the world model moves the chassis only in
     the plane, as the plant does (``apply_prediction``). ``urr_body_point``: the
-    body keypoint at the ``chest`` or at the ``waist`` (``URR_BODY_OFFSETS``), for
+    body keypoint at the ``waist`` or at the ``chest`` (``URR_BODY_OFFSETS``), for
     the actor's goal and the critic's keypoints alike. ``goal_modes``: the actor
     trains on ScaleBFM's modes, so its robot-frame goal comes in parts
     (``actor_goal_parts``) that each episode's mode gives or withholds."""

@@ -8,22 +8,31 @@ from typing import Any, Union, get_args, get_origin, get_type_hints
 
 from supermimic.runners.supermimic_runner import SuperMimicRunnerCfg
 
+# Defaults that changed since runs began saving them, by representation: what a
+# run saved before the field existed was trained with.
+_OLD_DEFAULTS = {"g1d": {"g1d_urr_body_point": "chest"}}
+
 
 def load_runner_cfg(run_config: dict[str, Any]) -> SuperMimicRunnerCfg:
   """Reconstruct ``SuperMimicRunnerCfg`` from ``run_config["runner_cfg"]``.
 
   JSON round-tripping turns tuples into lists and erases the ``policy`` union's
   variant; both are recovered structurally. Unknown keys are ignored and missing
-  fields take today's default with a warning, so runs written by older configs
-  still load; a missing or empty ``runner_cfg`` raises.
+  fields take today's default with a warning, or the value the run was trained
+  with where the default has changed since (``_OLD_DEFAULTS``), so runs written
+  by older configs still load; a missing or empty ``runner_cfg`` raises.
   """
   raw = run_config.get("runner_cfg")
   if not raw:
     raise ValueError("run has no serialized runner_cfg; cannot rebuild its config")
+  old = _OLD_DEFAULTS.get(raw.get("representation"), {})
+  old = {name: value for name, value in old.items() if name not in raw}
   defaulted: list[str] = []
-  cfg = _rebuild(SuperMimicRunnerCfg, raw, defaulted, "")
+  cfg = _rebuild(SuperMimicRunnerCfg, {**raw, **old}, defaulted, "")
   if defaulted:
     print(f"[WARN] run cfg missing fields, using current defaults: {defaulted}")
+  if old:
+    print(f"[WARN] run cfg predates fields, using the values it trained with: {old}")
   return cfg
 
 

@@ -66,7 +66,7 @@ def create_representation(
   g1d_chassis_window: bool = False,
   g1d_urr_table: bool = True,
   g1d_planar_chassis: bool = False,
-  g1d_urr_body_point: str = "chest",
+  g1d_urr_body_point: str = "waist",
   g1d_goal_modes: bool = False,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
@@ -75,7 +75,7 @@ def create_representation(
     or g1d_critic_urr
     or g1d_chassis_window
     or g1d_planar_chassis
-    or g1d_urr_body_point != "chest"
+    or g1d_urr_body_point != "waist"
     or g1d_goal_modes
   ):
     raise ValueError(

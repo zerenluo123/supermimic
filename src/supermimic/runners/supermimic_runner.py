@@ -84,11 +84,12 @@ class SuperMimicRunnerCfg:
   dropping the predicted Δv_z, Δw_x, Δw_y. Off, the imagined chassis can lift and
   tilt; its height and tilt channels, constant in every collected state, then enter
   the dynamics through a zero-std normalizer and the actor gradient can blow up."""
-  g1d_urr_body_point: Literal["chest", "waist"] = "chest"
+  g1d_urr_body_point: Literal["chest", "waist"] = "waist"
   """G1-D URR body keypoint, for the actor goal and the critic's keypoints: the
-  ``chest``, 0.2 m above the torso_link origin along its z (the g1d-urr
-  controller's), or the ``waist``, the torso_link origin itself (the waist yaw
-  joint), as ScaleBFM places its points at link origins."""
+  ``waist``, the torso_link origin (the waist yaw joint), as ScaleBFM places its
+  points at link origins, or the ``chest``, 0.2 m above it along its z (the
+  g1d-urr controller's). Runs saved before this field existed used the chest
+  (``run_config``)."""
   g1d_goal_modes: dict[str, float] = field(default_factory=dict)
   """G1-D: train the actor on ScaleBFM's modes, e.g.
   ``"{'full': 0.6, 'three_point': 0.4}"``: at every reset each env draws one

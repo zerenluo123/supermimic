@@ -188,6 +188,7 @@ def test_urr_goal_layout():
     motion.joint_vel[idx],
     quat_apply_inverse(root_quat, motion.root_lin_vel_w[idx]),
     quat_apply_inverse(root_quat, motion.root_ang_vel_w[idx]),
+    rep.urr_offsets,
   )
   frames = actor_goal[:, : NUM_GOAL_FRAMES * C.URR_POSE_DIM]
   torch.testing.assert_close(frames, pose.reshape(len(times), -1), atol=1e-5, rtol=0)
@@ -217,7 +218,7 @@ def test_urr_critic_extra():
   torch.testing.assert_close(
     extra[:, :1], _rep().critic_extra(rep_state, motion, times)
   )
-  table = motion_urr_table(motion, True)
+  table = motion_urr_table(motion, True, rep.urr_offsets)
   idx = goal_window_indices(motion, times)
   torch.testing.assert_close(extra[:, 1:571], table[idx].reshape(3, -1))
   # The robot's column is 5 cm up: all five keypoints rise 5 cm, the rest of its
