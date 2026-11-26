@@ -507,6 +507,7 @@ class G1DRepresentation(GenCoordRepresentation):
         target_body_ang_vel_w,
         self._soft_joint_pos_limits,
         self.dt,
+        self.reward_std_scale,
       )
       return error, reward
     reward = tracking_reward(
@@ -524,6 +525,7 @@ class G1DRepresentation(GenCoordRepresentation):
       target_body_ang_vel_w,
       self._soft_joint_pos_limits,
       self.dt,
+      self.reward_std_scale,
     )
     return error, reward
 

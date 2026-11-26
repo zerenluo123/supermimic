@@ -69,6 +69,7 @@ def create_representation(
   g1d_urr_body_point: str = "waist",
   g1d_goal_modes: bool = False,
   g1d_diff_drive: bool = False,
+  reward_std_scale: float = 1.0,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
   if name != "g1d" and (
@@ -117,6 +118,7 @@ def create_representation(
       f"Unknown representation: {name}. Must be 'gencoord', 'maxcoord' or 'g1d'."
     )
   rep.actor_obs_mode = actor_obs_mode
+  rep.reward_std_scale = reward_std_scale
   if actor_obs_mode == "proprio":
     rep.register_buffer(
       "_proprio_noise_bounds",
@@ -308,6 +310,10 @@ class StateRepresentation(nn.Module, ABC):
   critic_extra_dim: int = 0
   """Width of ``critic_extra``, privileged critic-only features (0: none)."""
 
+  reward_std_scale: float = 1.0
+  """Scale of the position and orientation kernel widths of the world-model
+  reward the actor trains on; the simulator's reward keeps the env's widths."""
+
   # ------------------------------------------------------------------
   # Abstract methods (must be implemented by subclasses)
   # ------------------------------------------------------------------
@@ -497,6 +503,7 @@ class StateRepresentation(nn.Module, ABC):
       target_body_ang_vel_w,
       self._soft_joint_pos_limits,
       self.dt,
+      self.reward_std_scale,
     )
 
   @abstractmethod

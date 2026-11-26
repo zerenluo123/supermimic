@@ -107,6 +107,12 @@ class SuperMimicRunnerCfg:
   rollouts keep their start's. The actor's normalized goal has the mode's withheld
   parts zeroed, and the actor and the critic read the mode's bit per part. Needs a
   robot-frame ``g1d_actor_goal``. Empty: the whole goal, no mode."""
+  wm_reward_std_scale: float = 1.0
+  """Scale of the position and orientation kernel widths of the world-model
+  reward the actor trains on (PartyMimic's ``--std_scale``; it trains at 0.35):
+  narrower kernels keep the reward's slope at cm-level errors. The velocity
+  kernels, the simulator's reward (logged returns, the reset sampler) and the
+  evaluation keep the env's widths."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False
@@ -207,6 +213,7 @@ def build_world_model(
     g1d_urr_body_point=cfg.g1d_urr_body_point,
     g1d_goal_modes=bool(cfg.g1d_goal_modes),
     g1d_diff_drive=cfg.g1d_diff_drive,
+    reward_std_scale=cfg.wm_reward_std_scale,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)
@@ -777,8 +784,12 @@ class SuperMimicRunner:
         world_model_path = str(log_dir / "world_model.pt")
         actor_path = str(log_dir / "actor.pt")
         torch.save(self._wm.bundle(), world_model_path)
-        torch.save(self.policy_learner.actor.state_dict(), actor_path)
+        torch.save(self.policy_learner.deployed_state_dict(), actor_path)
         checkpoint_files = [world_model_path, actor_path]
+        if self.policy_learner.keeps_ema:
+          live_path = str(log_dir / "actor_live.pt")
+          torch.save(self.policy_learner.actor.state_dict(), live_path)
+          checkpoint_files.append(live_path)
         critic = getattr(self.policy_learner, "critic", None)
         if critic is not None:
           critic_path = str(log_dir / "critic.pt")
@@ -792,13 +803,14 @@ class SuperMimicRunner:
           and self.motion.time_step_total <= 15_000
           and self.cfg.representation != "g1d"
         ):
-          checkpoint_files += export_actor_as_onnx(
-            actor=self.policy_learner.actor,
-            env=self.env.unwrapped,
-            path=str(log_dir),
-            run_name=wandb.run.name,
-            term_widths=self._representation.proprio_term_widths(self._num_actions),
-          )
+          with self.policy_learner.deployed_weights():
+            checkpoint_files += export_actor_as_onnx(
+              actor=self.policy_learner.actor,
+              env=self.env.unwrapped,
+              path=str(log_dir),
+              run_name=wandb.run.name,
+              term_widths=self._representation.proprio_term_widths(self._num_actions),
+            )
         upload = uploader.submit(log_model_artifact, checkpoint_files)
 
     uploader.shutdown()

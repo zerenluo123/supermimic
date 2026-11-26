@@ -104,3 +104,48 @@ def test_gae_returns_discount_by_soft_done():
   )
 
   assert torch.allclose(returns, torch.tensor([[1.495], [1.0]]))
+
+
+def test_actor_ema_averages_from_the_first_update():
+  actor = _DummyActor()
+  learner = BpttPolicyLearner(
+    actor, _TwoStepEnv(), BpttPolicyLearnerCfg(horizon=2, actor_ema=0.9)
+  )
+  batch = [TensorDict({}, batch_size=[NUM_ENVS])]
+
+  learner.update(batch)
+  first = actor.weight.detach().clone()
+  assert learner.deployed_state_dict()["weight"] == first
+  with torch.no_grad():  # the dummy env gives no gradient; move the weight by hand
+    actor.weight.fill_(1.0)
+  learner.update(batch)
+  second = actor.weight.detach().clone()
+  assert second != first
+
+  average = 0.9 * first + 0.1 * second
+  torch.testing.assert_close(learner.deployed_state_dict()["weight"], average)
+  with learner.deployed_weights():
+    torch.testing.assert_close(actor.weight.detach(), average)
+  assert actor.weight.detach() == second
+
+
+def test_no_actor_ema_stores_the_live_actor():
+  actor = _DummyActor()
+  learner = BpttPolicyLearner(actor, _TwoStepEnv(), BpttPolicyLearnerCfg(horizon=2))
+  learner.update([TensorDict({}, batch_size=[NUM_ENVS])])
+  assert not learner.keeps_ema
+  assert learner.deployed_state_dict()["weight"] == actor.weight.detach()
+
+
+def test_critic_lr_defaults_to_the_actor_lr():
+  def critic_lr(**cfg) -> float:
+    learner = ActorCriticPolicyLearner(
+      _DummyActor(),
+      _ConstantCritic(1.0),
+      _TwoStepEnv(),
+      ActorCriticPolicyLearnerCfg(horizon=2, lr=6e-4, **cfg),
+    )
+    return float(learner.critic_optimizers[0].param_groups[0]["lr"])
+
+  assert critic_lr() == pytest.approx(6e-4)
+  assert critic_lr(critic_lr=2e-4) == pytest.approx(2e-4)

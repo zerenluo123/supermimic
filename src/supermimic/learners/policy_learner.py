@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import contextlib
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 
 import torch
@@ -34,12 +35,18 @@ class BpttPolicyLearnerCfg:
   bf16: bool = True
   """Run the actor of the imagined rollout under bfloat16 autocast (upstream
   d88804a); False keeps it in float32."""
+  actor_ema: float = 0.0
+  """Decay per actor step of a Polyak average of the actor's weights (PartyMimic's
+  ``--pi_ema``, 0.995 there): the checkpoint's actor is the average, the simulator
+  keeps collecting with the live actor. 0 keeps no average."""
 
 
 @dataclass
 class ActorCriticPolicyLearnerCfg(BpttPolicyLearnerCfg):
   gamma: float = 0.99
   lam: float = 0.95
+  critic_lr: float | None = None
+  """Learning rate of the critic; None takes ``lr``."""
 
 
 def gae_returns(
@@ -85,13 +92,59 @@ class BpttPolicyLearner:
       torch.compile(self.actor) if torch.device(device).type == "cuda" else self.actor
     )
     self._captured_update = CapturedUpdate(self._update_from, self._graph_state)
+    self._ema_params: list[torch.Tensor] | None = None
+
+  @property
+  def keeps_ema(self) -> bool:
+    return self.cfg.actor_ema > 0
 
   def update(self, starts: Iterable[TensorDict]) -> dict[str, torch.Tensor]:
     self.actor.train()
     for module in (self.wm_env.dynamics, self.wm_env.representation):
       module.eval()
       module.requires_grad_(False)
-    return self._captured_update(torch.stack(list(starts)))
+    starts = torch.stack(list(starts))
+    logs = self._captured_update(starts)
+    self._update_ema(starts.shape[0])
+    return logs
+
+  @torch.no_grad()
+  def _update_ema(self, steps: int) -> None:
+    """Move the average toward the live actor by ``steps`` actor steps. It starts
+    at the first update, after data-parallel ranks have synced their weights."""
+    if not self.keeps_ema:
+      return
+    live = [p.detach() for p in self.actor.parameters()]
+    if self._ema_params is None:
+      self._ema_params = [p.clone() for p in live]
+      return
+    torch._foreach_lerp_(self._ema_params, live, 1.0 - self.cfg.actor_ema**steps)
+
+  @contextlib.contextmanager
+  def deployed_weights(self) -> Iterator[None]:
+    """Hold the average in the actor's own parameters (in place, so captured
+    updates still find them), e.g. to export it."""
+    if self._ema_params is None:
+      yield
+      return
+    params = list(self.actor.parameters())
+    with torch.no_grad():
+      live = [p.detach().clone() for p in params]
+      torch._foreach_copy_(params, self._ema_params)
+    try:
+      yield
+    finally:
+      with torch.no_grad():
+        torch._foreach_copy_(params, live)
+
+  def deployed_state_dict(self) -> dict[str, torch.Tensor]:
+    """The actor a checkpoint stores: the live one with its weights replaced by
+    the average under ``actor_ema`` (the normalizer statistics stay live)."""
+    state = self.actor.state_dict()
+    if self._ema_params is not None:
+      names = [name for name, _ in self.actor.named_parameters()]
+      state.update({n: p.clone() for n, p in zip(names, self._ema_params, strict=True)})
+    return state
 
   def _update_from(self, starts: TensorDict) -> dict[str, torch.Tensor]:
     totals: dict[str, torch.Tensor] = {}
@@ -165,7 +218,8 @@ class ActorCriticPolicyLearner(BpttPolicyLearner):
   ):
     super().__init__(policy, wm_env, cfg, device)
     self.critic = critic
-    self.critic_optimizers = build_optimizers([critic], self.cfg.lr, device=device)
+    critic_lr = self.cfg.lr if self.cfg.critic_lr is None else self.cfg.critic_lr
+    self.critic_optimizers = build_optimizers([critic], critic_lr, device=device)
     self._v_max = self.wm_env.max_step_reward / (1 - self.cfg.gamma)
 
   def _bootstrap(

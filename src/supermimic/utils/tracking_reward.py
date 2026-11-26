@@ -53,28 +53,36 @@ def tracking_reward(
   target_ang_vel: torch.Tensor,
   soft_joint_pos_limits: torch.Tensor,
   dt: float,
+  pos_ori_std_scale: float = 1.0,
 ) -> torch.Tensor:
   """Gaussian-kernel reward matching the motion-tracking env.
 
   ``pred_*`` are the predicted bodies in the world frame and ``aux_state`` the
-  predicted root pose the targets are re-anchored to.
+  predicted root pose the targets are re-anchored to. ``pos_ori_std_scale``
+  scales the position and orientation kernel widths (PartyMimic's
+  ``--std_scale``); the velocity kernels keep theirs.
   """
+  k = pos_ori_std_scale
   tgt_pos, tgt_mat, tgt_lin_vel, tgt_ang_vel = _reanchor_targets(
     target_pos, target_quat, target_lin_vel, target_ang_vel, aux_state
   )
 
   terms: list[tuple[torch.Tensor, float, float]] = [
-    (torch.sum((pred_pos[..., 0, :] - target_pos[..., 0, :]) ** 2, dim=-1), 0.5, 0.3),
+    (
+      torch.sum((pred_pos[..., 0, :] - target_pos[..., 0, :]) ** 2, dim=-1),
+      0.5,
+      0.3 * k,
+    ),
     (
       rotation_error_magnitude(
         pred_rot_mat[..., 0, :, :], matrix_from_quat(target_quat[..., 0, :])
       )
       ** 2,
       0.5,
-      0.4,
+      0.4 * k,
     ),
-    (torch.sum((pred_pos - tgt_pos) ** 2, dim=-1).mean(-1), 1.0, 0.3),
-    ((rotation_error_magnitude(pred_rot_mat, tgt_mat) ** 2).mean(-1), 1.0, 0.4),
+    (torch.sum((pred_pos - tgt_pos) ** 2, dim=-1).mean(-1), 1.0, 0.3 * k),
+    ((rotation_error_magnitude(pred_rot_mat, tgt_mat) ** 2).mean(-1), 1.0, 0.4 * k),
     (torch.sum((pred_lin_vel - tgt_lin_vel) ** 2, dim=-1).mean(-1), 1.0, 1.0),
     (torch.sum((pred_ang_vel - tgt_ang_vel) ** 2, dim=-1).mean(-1), 1.0, 3.14),
   ]

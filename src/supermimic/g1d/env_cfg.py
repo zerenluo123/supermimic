@@ -983,10 +983,12 @@ def world_tracking_reward(
   ref_ang_vel: torch.Tensor,
   soft_joint_pos_limits: torch.Tensor,
   dt: float,
+  pos_ori_std_scale: float = 1.0,
 ) -> torch.Tensor:
   """The ``world_reward`` env's step reward, as its reward manager sums
   ``_terms_from``: ``action`` and ``last_action`` are the effective ones and
-  ``joint_state`` is ``[qj, vj]``."""
+  ``joint_state`` is ``[qj, vj]``. ``pos_ori_std_scale`` scales the position and
+  orientation kernel widths (the world model's training reward only)."""
   err = world_tracking_errors(
     body_pos,
     body_rot,
@@ -997,8 +999,9 @@ def world_tracking_reward(
     ref_lin_vel,
     ref_ang_vel,
   )
+  scales = (pos_ori_std_scale, pos_ori_std_scale, 1.0, 1.0)
   reward = sum(
-    weight * torch.exp(-err[..., i] / std**2)
+    weight * torch.exp(-err[..., i] / (std * scales[i]) ** 2)
     for i, (_, weight, std) in enumerate(WORLD_TRACKING_TERMS)
   )
   action_rate = ((action - last_action) ** 2).sum(-1)
