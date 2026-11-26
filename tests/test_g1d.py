@@ -371,3 +371,43 @@ def test_planar_chassis_keeps_the_imagined_chassis_on_the_floor(planar):
     + rep_state[:, [6, 7, 8]].abs().max()
   )
   assert (out_of_plane < 1e-5) == planar
+
+
+@pytest.mark.parametrize("diff_drive", [False, True])
+def test_diff_drive_keeps_the_imagined_chassis_from_sliding_sideways(diff_drive):
+  from supermimic.g1d.representation import G1DRepresentation
+
+  rep = G1DRepresentation("cpu", planar_chassis=True, diff_drive=diff_drive)
+  rep.substep_coeff = 0.6
+  B, N = 8, rep.num_joints
+  yaw = torch.linspace(-3.0, 3.0, B)
+  aux = torch.cat(
+    [torch.randn(B, 2), torch.full((B, 1), 0.11), yaw_quat_from_angle(yaw)], -1
+  )
+  rep_state = torch.cat(
+    [
+      torch.full((B, 1), 0.11),
+      torch.tensor([0.0, 0.0, -1.0]).expand(B, 3),
+      torch.tensor([1.0, 0.0, 0.0]).expand(B, 3),  # driving forward, no sideways speed
+      torch.tensor([0.0, 0.0, 0.5]).expand(B, 3),  # and turning
+      torch.randn(B, 2 * N),
+    ],
+    -1,
+  )
+  prediction = torch.randn(B, rep.prediction_dim)
+  prediction[:, 1] = 0.0  # no predicted sideways push: only the turn could slide it
+  sideways = []
+  for _ in range(5):
+    aux, rep_state = rep.apply_prediction(aux, rep_state, prediction, 0.02)
+    sideways.append(rep_state[:, 5].abs().max())
+  assert (max(sideways) == 0.0) == diff_drive
+  # Still on the floor and in the plane.
+  assert (rep_state[:, 0] - 0.11).abs().max() < 1e-5
+  assert rep_state[:, [1, 2, 6, 7, 8]].abs().max() < 1e-5
+
+
+def test_diff_drive_needs_the_planar_chassis():
+  from supermimic.g1d.representation import G1DRepresentation
+
+  with pytest.raises(ValueError, match="planar_chassis"):
+    G1DRepresentation("cpu", diff_drive=True)

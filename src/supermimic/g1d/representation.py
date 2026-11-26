@@ -110,6 +110,7 @@ class G1DRepresentation(GenCoordRepresentation):
     planar_chassis: bool = False,
     urr_body_point: str = "waist",
     goal_modes: bool = False,
+    diff_drive: bool = False,
   ):
     """``actor_goal``: per window frame the reference joints and their velocities
     (``"joints"``), the reference URR keypoint pose in that frame's reference
@@ -127,7 +128,10 @@ class G1DRepresentation(GenCoordRepresentation):
     body keypoint at the ``waist`` or at the ``chest`` (``URR_BODY_OFFSETS``), for
     the actor's goal and the critic's keypoints alike. ``goal_modes``: the actor
     trains on ScaleBFM's modes, so its robot-frame goal comes in parts
-    (``actor_goal_parts``) that each episode's mode gives or withholds."""
+    (``actor_goal_parts``) that each episode's mode gives or withholds.
+    ``diff_drive`` (with ``planar_chassis``): the imagined chassis also never moves
+    sideways in its own frame, as the plant's differential drive
+    (``apply_prediction``)."""
     super().__init__(C.NJ, torch.tensor(default_state_q(), device=device))
     if actor_goal not in ACTOR_GOALS:
       raise ValueError(f"actor_goal is one of {ACTOR_GOALS}, not {actor_goal!r}")
@@ -135,12 +139,15 @@ class G1DRepresentation(GenCoordRepresentation):
       raise ValueError(f"actor_goal {actor_goal!r} needs chassis_window")
     if goal_modes and actor_goal not in ROBOT_FRAME_GOALS:
       raise ValueError(f"goal_modes need a robot-frame actor_goal {ROBOT_FRAME_GOALS}")
+    if diff_drive and not planar_chassis:
+      raise ValueError("diff_drive needs planar_chassis")
     self._encoder_bias: tuple[slice, SimContext] | None = None
     self.actor_goal = actor_goal
     self.critic_urr = critic_urr
     self.chassis_window = chassis_window
     self.urr_table = urr_table
     self.planar_chassis = planar_chassis
+    self.diff_drive = diff_drive
     self.urr_offsets = urr_offsets(urr_body_point)
     self.goal_modes = goal_modes
     urr_width = C.URR_POSE_DIM + C.URR_VEL_DIM
@@ -185,7 +192,12 @@ class G1DRepresentation(GenCoordRepresentation):
   ) -> tuple[torch.Tensor, torch.Tensor]:
     """GenCoord's integration; with ``planar_chassis`` the predicted Δv_z, Δw_x,
     Δw_y are dropped, so a planar state (the plant's) stays planar: z and g_b keep
-    their values, as in every collected state."""
+    their values, as in every collected state.
+
+    ``diff_drive`` also drops Δv_y and sets the next v_y to zero. Dropping the delta
+    alone does not hold v_y: GenCoord carries the twist into the yawed frame, so a
+    chassis that drives and turns would slide sideways (by v_x * sin(dyaw) a step),
+    which the plant's wheels never do (its drives only push along the heading)."""
     if self.planar_chassis:
       prediction = torch.cat(
         [
@@ -195,7 +207,24 @@ class G1DRepresentation(GenCoordRepresentation):
         ],
         dim=-1,
       )
-    return super().apply_prediction(aux_state, curr_rep_state, prediction, dt)
+    if self.diff_drive:  # Δv_y
+      prediction = torch.cat(
+        [
+          prediction[..., :1],
+          torch.zeros_like(prediction[..., 1:2]),
+          prediction[..., 2:],
+        ],
+        dim=-1,
+      )
+    next_aux, next_rep = super().apply_prediction(
+      aux_state, curr_rep_state, prediction, dt
+    )
+    if self.diff_drive:  # v_y, after z(1), g_b(3), v_x(1)
+      next_rep = torch.cat(
+        [next_rep[..., :5], torch.zeros_like(next_rep[..., 5:6]), next_rep[..., 6:]],
+        dim=-1,
+      )
+    return next_aux, next_rep
 
   # ------------------------------------------------------------------
   # Proprio

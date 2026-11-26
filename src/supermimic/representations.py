@@ -68,6 +68,7 @@ def create_representation(
   g1d_planar_chassis: bool = False,
   g1d_urr_body_point: str = "waist",
   g1d_goal_modes: bool = False,
+  g1d_diff_drive: bool = False,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
   if name != "g1d" and (
@@ -77,10 +78,12 @@ def create_representation(
     or g1d_planar_chassis
     or g1d_urr_body_point != "waist"
     or g1d_goal_modes
+    or g1d_diff_drive
   ):
     raise ValueError(
       "g1d_actor_goal / g1d_critic_urr / g1d_chassis_window / g1d_planar_chassis "
-      "/ g1d_urr_body_point / g1d_goal_modes apply to the g1d representation"
+      "/ g1d_urr_body_point / g1d_goal_modes / g1d_diff_drive apply to the g1d "
+      "representation"
     )
   if name == "gencoord":
     num_joints = infer_num_joints_from_state_dim(full_state_dim)
@@ -103,6 +106,7 @@ def create_representation(
       planar_chassis=g1d_planar_chassis,
       urr_body_point=g1d_urr_body_point,
       goal_modes=g1d_goal_modes,
+      diff_drive=g1d_diff_drive,
     )
     if full_state_dim != rep.full_state_dim:
       raise ValueError(

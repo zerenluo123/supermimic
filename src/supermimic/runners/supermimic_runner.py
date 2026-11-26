@@ -84,6 +84,12 @@ class SuperMimicRunnerCfg:
   dropping the predicted Δv_z, Δw_x, Δw_y. Off, the imagined chassis can lift and
   tilt; its height and tilt channels, constant in every collected state, then enter
   the dynamics through a zero-std normalizer and the actor gradient can blow up."""
+  g1d_diff_drive: bool = False
+  """G1-D world model, with ``g1d_planar_chassis``: the imagined chassis never moves
+  sideways in its own frame, as the plant's differential drive: the predicted Δv_y
+  is dropped and v_y held at zero. Off, the barely-trained Δv_y head (the loss sees
+  v_y only through the integrated root position) can drive v_y far outside the data,
+  where its 0.017 normalizer scale makes the imagined loop unstable."""
   g1d_urr_body_point: Literal["chest", "waist"] = "waist"
   """G1-D URR body keypoint, for the actor goal and the critic's keypoints: the
   ``waist``, the torso_link origin (the waist yaw joint), as ScaleBFM places its
@@ -196,6 +202,7 @@ def build_world_model(
     g1d_planar_chassis=cfg.g1d_planar_chassis,
     g1d_urr_body_point=cfg.g1d_urr_body_point,
     g1d_goal_modes=bool(cfg.g1d_goal_modes),
+    g1d_diff_drive=cfg.g1d_diff_drive,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)
