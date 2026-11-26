@@ -33,3 +33,24 @@ def test_g1d_keeps_an_explicit_history():
 def test_g1d_refuses_the_true_state(args):
   with pytest.raises(ValueError, match="proprio"):
     apply_g1d_defaults(SuperMimicRunnerCfg(), args)
+
+
+def test_g1d_defaults_turn_on_the_planar_diff_drive_chassis():
+  cfg = SuperMimicRunnerCfg()
+  apply_g1d_defaults(cfg, [])
+  assert (cfg.g1d_planar_chassis, cfg.g1d_diff_drive) == (True, True)
+
+
+@pytest.mark.parametrize(
+  ("args", "expected"),
+  [
+    (["--runner.g1d-diff-drive", "False"], (True, False)),
+    (["--runner.g1d_diff_drive=False"], (True, False)),
+    (["--runner.g1d-planar-chassis", "False"], (False, False)),
+    (["--runner.g1d_planar_chassis=False"], (False, False)),
+  ],
+)
+def test_g1d_keeps_an_explicit_chassis_choice(args, expected):
+  cfg = SuperMimicRunnerCfg()  # tyro has parsed the explicit False into the cfg
+  apply_g1d_defaults(cfg, args)
+  assert (cfg.g1d_planar_chassis, cfg.g1d_diff_drive) == expected

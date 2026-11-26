@@ -83,13 +83,17 @@ class SuperMimicRunnerCfg:
   """G1-D world model: keep the chassis in the plane (x, y, yaw) as the plant does,
   dropping the predicted Δv_z, Δw_x, Δw_y. Off, the imagined chassis can lift and
   tilt; its height and tilt channels, constant in every collected state, then enter
-  the dynamics through a zero-std normalizer and the actor gradient can blow up."""
+  the dynamics through a zero-std normalizer and the actor gradient can blow up.
+  Training the G1-D turns it on unless the command line sets it
+  (``apply_g1d_defaults``)."""
   g1d_diff_drive: bool = False
   """G1-D world model, with ``g1d_planar_chassis``: the imagined chassis never moves
   sideways in its own frame, as the plant's differential drive: the predicted Δv_y
   is dropped and v_y held at zero. Off, the barely-trained Δv_y head (the loss sees
   v_y only through the integrated root position) can drive v_y far outside the data,
-  where its 0.017 normalizer scale makes the imagined loop unstable."""
+  where its 0.017 normalizer scale makes the imagined loop unstable. Training the
+  G1-D with the planar chassis turns it on unless the command line sets it
+  (``apply_g1d_defaults``)."""
   g1d_urr_body_point: Literal["chest", "waist"] = "waist"
   """G1-D URR body keypoint, for the actor goal and the critic's keypoints: the
   ``waist``, the torso_link origin (the waist yaw joint), as ScaleBFM places its

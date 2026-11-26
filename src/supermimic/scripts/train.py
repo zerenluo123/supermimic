@@ -59,8 +59,10 @@ def _passed(args: list[str], flag: str) -> bool:
 
 def apply_g1d_defaults(runner: SuperMimicRunnerCfg, args: list[str]) -> None:
   """The G1-D trains the deployable actor: proprio with a 10-frame history, never
-  the true state. Fills in what the command line leaves at the G1 defaults and
-  refuses ``--runner.actor-obs rep_state``."""
+  the true state, on a world model whose chassis moves as the plant's: in the plane
+  and never sideways (``g1d_planar_chassis``, ``g1d_diff_drive``). Fills in what the
+  command line leaves at the G1 defaults and refuses ``--runner.actor-obs
+  rep_state``."""
   if runner.representation == "gencoord":
     runner.representation = "g1d"
     print("[INFO] Auto-detected g1d representation from task_id")
@@ -75,6 +77,16 @@ def apply_g1d_defaults(runner: SuperMimicRunnerCfg, args: list[str]) -> None:
   if runner.history_length == 1 and not _passed(args, "--runner.history-length"):
     runner.history_length = 10
     print("[INFO] G1-D actor history: 10 frames")
+  if not runner.g1d_planar_chassis and not _passed(args, "--runner.g1d-planar-chassis"):
+    runner.g1d_planar_chassis = True
+    print("[INFO] G1-D world model: planar chassis")
+  if (
+    runner.g1d_planar_chassis
+    and not runner.g1d_diff_drive
+    and not _passed(args, "--runner.g1d-diff-drive")
+  ):
+    runner.g1d_diff_drive = True
+    print("[INFO] G1-D world model: differential-drive chassis")
 
 
 def main() -> None:
