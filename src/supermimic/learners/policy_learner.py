@@ -38,7 +38,8 @@ class BpttPolicyLearnerCfg:
   actor_ema: float = 0.0
   """Decay per actor step of a Polyak average of the actor's weights (PartyMimic's
   ``--pi_ema``, 0.995 there): the checkpoint's actor is the average, the simulator
-  keeps collecting with the live actor. 0 keeps no average."""
+  keeps collecting with the live actor. 0 keeps no average. Training the G1-D sets
+  0.995 unless the command line sets it (``apply_g1d_defaults``)."""
 
 
 @dataclass

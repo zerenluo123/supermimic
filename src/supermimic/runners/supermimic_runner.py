@@ -112,7 +112,8 @@ class SuperMimicRunnerCfg:
   reward the actor trains on (PartyMimic's ``--std_scale``; it trains at 0.35):
   narrower kernels keep the reward's slope at cm-level errors. The velocity
   kernels, the simulator's reward (logged returns, the reset sampler) and the
-  evaluation keep the env's widths."""
+  evaluation keep the env's widths. Training the G1-D sets 0.35 unless the command
+  line sets it (``apply_g1d_defaults``)."""
   log_interval: int = 10
   save_interval: int = 1000
   keep_checkpoints: bool = False

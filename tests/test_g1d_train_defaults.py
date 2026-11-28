@@ -1,4 +1,5 @@
-"""The G1-D trains on proprio with a 10-frame history unless told otherwise."""
+"""The G1-D trains on proprio with a 10-frame history, the planar diff-drive chassis,
+narrow reward kernels and an averaged actor unless told otherwise."""
 
 from __future__ import annotations
 
@@ -54,3 +55,22 @@ def test_g1d_keeps_an_explicit_chassis_choice(args, expected):
   cfg = SuperMimicRunnerCfg()  # tyro has parsed the explicit False into the cfg
   apply_g1d_defaults(cfg, args)
   assert (cfg.g1d_planar_chassis, cfg.g1d_diff_drive) == expected
+
+
+def test_g1d_defaults_turn_on_the_narrow_kernels_and_the_actor_ema():
+  cfg = SuperMimicRunnerCfg()
+  apply_g1d_defaults(cfg, [])
+  assert (cfg.wm_reward_std_scale, cfg.policy.actor_ema) == (0.35, 0.995)
+
+
+@pytest.mark.parametrize(
+  "args",
+  [
+    ["--runner.wm-reward-std-scale", "1.0", "--runner.policy.actor-ema", "0.0"],
+    ["--runner.wm_reward_std_scale=1.0", "--runner.policy.actor_ema=0.0"],
+  ],
+)
+def test_g1d_keeps_explicit_wide_kernels_and_no_ema(args):
+  cfg = SuperMimicRunnerCfg()  # tyro has parsed the explicit values into the cfg
+  apply_g1d_defaults(cfg, args)
+  assert (cfg.wm_reward_std_scale, cfg.policy.actor_ema) == (1.0, 0.0)

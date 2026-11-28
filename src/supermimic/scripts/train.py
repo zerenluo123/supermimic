@@ -60,9 +60,10 @@ def _passed(args: list[str], flag: str) -> bool:
 def apply_g1d_defaults(runner: SuperMimicRunnerCfg, args: list[str]) -> None:
   """The G1-D trains the deployable actor: proprio with a 10-frame history, never
   the true state, on a world model whose chassis moves as the plant's: in the plane
-  and never sideways (``g1d_planar_chassis``, ``g1d_diff_drive``). Fills in what the
-  command line leaves at the G1 defaults and refuses ``--runner.actor-obs
-  rep_state``."""
+  and never sideways (``g1d_planar_chassis``, ``g1d_diff_drive``), with PartyMimic's
+  narrow world-model reward kernels (``wm_reward_std_scale`` 0.35) and an averaged
+  actor (``policy.actor_ema`` 0.995). Fills in what the command line leaves at the G1
+  defaults and refuses ``--runner.actor-obs rep_state``."""
   if runner.representation == "gencoord":
     runner.representation = "g1d"
     print("[INFO] Auto-detected g1d representation from task_id")
@@ -87,6 +88,14 @@ def apply_g1d_defaults(runner: SuperMimicRunnerCfg, args: list[str]) -> None:
   ):
     runner.g1d_diff_drive = True
     print("[INFO] G1-D world model: differential-drive chassis")
+  if runner.wm_reward_std_scale == 1.0 and not _passed(
+    args, "--runner.wm-reward-std-scale"
+  ):
+    runner.wm_reward_std_scale = 0.35
+    print("[INFO] G1-D world-model reward: position/orientation kernels x0.35")
+  if runner.policy.actor_ema == 0.0 and not _passed(args, "--runner.policy.actor-ema"):
+    runner.policy.actor_ema = 0.995
+    print("[INFO] G1-D actor: EMA 0.995")
 
 
 def main() -> None:
